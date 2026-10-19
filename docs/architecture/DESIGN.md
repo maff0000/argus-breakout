@@ -105,7 +105,10 @@ ADR-0003 (data sources), ADR-0004 (model gateway), ADR-0005
 ```
 symbols        (symbol TEXT PK, name TEXT, gics_sector TEXT, gics_industry_group TEXT,
                 exchange TEXT, first_date DATE, last_date DATE, active BOOLEAN)
-membership     (symbol TEXT, start_date DATE, end_date DATE NULL, source TEXT)   -- point-in-time S&P 500
+membership     (symbol TEXT, start_date DATE, end_date DATE NULL, source TEXT)
+                -- point-in-time S&P 500. BOTH BOUNDS INCLUSIVE (AMD-0011): a symbol is a member
+                -- on start_date and on end_date. end_date NULL = still a member. A removal
+                -- effective on date D is stored as end_date = the last trading day before D.
 bars_raw       (symbol TEXT, date DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,
                 volume DOUBLE, source TEXT, basis TEXT {'unadjusted','split','split_div'},
                 ingested_at TIMESTAMP)                                         -- as received, with its adjustment basis
@@ -164,6 +167,10 @@ schema_version (version INT, applied_at TIMESTAMP)
 - Reconciliation: 20 rotating members per night vs IBKR `ADJUSTED_LAST`
   daily bars; tolerance 0.1% on close, 10% on volume; breaches written to
   `reconcile_log` and surfaced.
+- Membership intervals are **closed on both ends** (AMD-0011):
+  `members_on(d)` is `start_date <= d AND (end_date IS NULL OR d <= end_date)`.
+  Re-added symbols get a second interval; intervals for one symbol never
+  overlap.
 - Composites are equal-weight, rebalanced daily, over members per
   `membership` as of each date (no survivorship bias).
 
