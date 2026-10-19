@@ -36,8 +36,8 @@ browser.
 | WO | Title | Depends on | Group |
 |---|---|---|---|
 | WO-0001 | Repository skeleton, settings, logging, CLI, tooling, CI | — | P0-A |
-| WO-0002 | DuckDB schema and Store | WO-0001 | P0-B |
-| WO-0003 | Ticker normalisation, universe and point-in-time membership (FMP client) | WO-0002 | P0-C |
+| WO-0002 | DuckDB schema, Store and ticker normalisation | WO-0001 | P0-B |
+| WO-0003 | Universe and point-in-time membership (FMP client) | WO-0002 | P0-C |
 | WO-0004 | Polygon provider: grouped-daily, splits, dividends; ingest CLI; validation | WO-0002 | P0-C |
 | WO-0005 | Bootstrap history provider (yfinance) | WO-0002 | P0-C |
 | WO-0006 | FMP calendars → events (earnings, ex-dividend) | WO-0003 | P0-D |

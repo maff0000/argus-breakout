@@ -117,12 +117,21 @@ moves it to `Accepted`. The Delivery Controller moves it through every
 other state and records each transition in `DELIVERY-LOG.md`.
 
 ### 6.3 Base SHA discipline
-The Work Order's Base SHA is the commit the branch is cut from. If `main`
-has advanced past the Base SHA before work starts, the Delivery Controller
-**may** rebase the Work Order onto the new `main` HEAD and record the new
-SHA — **only if** `git diff --stat <old-base> <new-base> -- <every path in
-the Work Order's scope>` is empty. If any in-scope path changed, the Work
-Order is **Returned to Architect**.
+The Work Order's Base SHA is the commit the branch is cut from.
+
+- A Work Order with no dependencies carries a literal 40-hex Base SHA at
+  approval.
+- A Work Order with dependencies carries a **by-reference** Base SHA at
+  approval: `main at Closure of <WO-list>`. When every listed Work Order is
+  Closed, the Delivery Controller resolves it to the 40-hex SHA of `main`
+  at that moment, records it in the Work Order (clerical, §6.4), and cuts
+  the branch there. The reference is exact: there is one such commit.
+
+If `main` has advanced past a recorded Base SHA before work starts, the
+Delivery Controller **may** rebase the Work Order onto the new `main` HEAD
+and record the new SHA — **only if** `git diff --stat <old-base> <new-base>
+-- <every path in the Work Order's scope>` is empty. If any in-scope path
+changed, the Work Order is **Returned to Architect**.
 
 ### 6.4 Clerical fields the Delivery Controller may update
 Status, Base SHA (under §6.3 only), branch name, PR number, evidence paths,
