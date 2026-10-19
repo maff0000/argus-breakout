@@ -22,6 +22,19 @@
   below were re-run on the final head.
 
 
+## Commit identity check (AMD-0009)
+`commit_identity_clean` postdates the Auditor dispatch (AMD-0009 landed after the audit ran), so it was not in the Auditor
+prompt or verdict block; it is mechanical and recorded here instead (run on `dell-debian`, repo-local config confirmed first):
+```
+$ git -C /srv/argus-breakout config --local author.name / author.email / committer.name / committer.email
+Rogue (Delivery Controller) / noreply@anthropic.com / Rogue (Delivery Controller) / noreply@anthropic.com
+$ git log --format='%an <%ae> | %cn <%ce>' c582c61152dd68807aad59aa58a347e78b755cb2..HEAD | sort -u
+Claude (Architect) <noreply@anthropic.com> | Claude (Architect) <noreply@anthropic.com>
+Rogue (Delivery Controller) <noreply@anthropic.com> | Rogue (Delivery Controller) <noreply@anthropic.com>
+```
+Result: only the two project identities listed in `PID.md` §9 (the Architect lines are the upstream governance commits
+inside the range). `commit_identity_clean: yes`.
+
 ## Mechanical results at the final head (host-run, verbatim)
 ```
 host=dell-debian cwd=/srv/argus-breakout-wt/WO-0001 head=be5a224bf98cb5ffb25e4d462663d72f3c45c6f9 branch=wo/0001-repo-skeleton

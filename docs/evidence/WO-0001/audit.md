@@ -1,8 +1,8 @@
 # WO-0001 — Audit record
 
 Fresh Forge Auditor dispatch, ssh-only, audit worktree `/srv/argus-breakout-wt/WO-0001-audit` at the audited SHA.
-This audit is of the **final** head. (An earlier audit of the tree-identical pre-rebase commit `be43d78` was also
-GREEN with the same single procedural finding; it was superseded by the rebase onto `02ddd97` and is not relied on.)
+This audit is of the **final** head. (An earlier audit of the tree-identical pre-rebase commit was also GREEN with
+the same single procedural finding; it was superseded by the rebase onto `02ddd97` and is not relied on.)
 
 ## Verdict block (as returned)
 ```
