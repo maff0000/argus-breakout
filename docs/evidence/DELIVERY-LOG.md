@@ -8,3 +8,6 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-19T22:29Z  WO-0001  Audited GREEN  audited sha be5a224bf98cb5ffb25e4d462663d72f3c45c6f9; evidence docs/evidence/WO-0001/
 2026-10-19T22:29Z  WO-0001  PR Open  branch wo/0001-repo-skeleton; awaiting ARCHITECT ACCEPTANCE
 2026-10-19T22:30Z  WO-0001  PR Open  PR #1
+2026-10-19T22:48Z  WO-0001  Accepted  Architect acceptance comment + docs/evidence/WO-0001/acceptance.md (ec0a88f) at audited be5a224
+2026-10-19T22:48Z  WO-0001  Merged  PR #1 merge commit (no squash); CI green
+2026-10-19T22:48Z  WO-0001  Closed  
