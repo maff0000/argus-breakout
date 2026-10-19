@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | In Progress |
+| **Status** | PR Open |
 | **Parent PID** | `PID.md` (PID-ARGUS-0000) §9 Public Repository Security |
 | **Applicable Amendments** | AMD-0005, AMD-0006, AMD-0007 |
 | **Base SHA** | `02ddd97de53c34fb2914cab17ca7cf3e832d659f` (rebased from `c582c61…` under §6.3: in-scope diff empty; carries AMD-0006/0007 text) |
