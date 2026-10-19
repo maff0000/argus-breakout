@@ -174,6 +174,10 @@ are Architect-only.
   2. `docs/evidence/WO-NNNN/acceptance.md` (template in this directory),
      committed to the PR branch by the Architect, or by the Delivery
      Controller quoting the comment URL if the Architect cannot push.
+- No rebase, merge or cherry-pick may be scripted to continue through a
+  conflict; a conflict stops the operation for inspection. After any
+  history operation on a Work Order branch, re-verify the Base SHA in-scope
+  diff and the commit identities (`PID.md` §9) before proceeding (AMD-0009).
 - Merge is a **merge commit** (no squash, no rebase of pushed commits), by
   the Delivery Controller, only after both acceptance artefacts exist and
   the audited SHA is the branch head. Any commit after the audited SHA

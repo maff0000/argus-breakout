@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| **Status** | PR Open |
+| **Status** | In Progress |
 | **Parent PID** | `PID.md` (PID-ARGUS-0000) §9 Public Repository Security |
-| **Applicable Amendments** | AMD-0005, AMD-0006, AMD-0007 |
-| **Base SHA** | `02ddd97de53c34fb2914cab17ca7cf3e832d659f` (rebased from `c582c61…` under §6.3: in-scope diff empty; carries AMD-0006/0007 text) |
+| **Applicable Amendments** | AMD-0005, AMD-0006, AMD-0007, AMD-0008 |
+| **Base SHA** | `02ddd97de53c34fb2914cab17ca7cf3e832d659f` (rebased from `c582c61…` under §6.3: in-scope diff empty; main merged at `4d1f2f1` to carry AMD-0008/0009 text, scope-path diff from `02ddd97…` empty) |
 | **Branch** | `wo/0010-secret-drop-hardening` |
 | **Depends on** | none |
 | **Parallel group** | P0-A (independent of WO-0001; touches no path in its scope) |
@@ -25,15 +25,16 @@ repository root, protected only by nobody having run `git add -A`.
                              secrets block, ignoring at minimum:
                                *.key  *.pem  *.p12  *.pfx  *.jks
                                *secret*  *credential*  *apikey*  *api-key*  *api_key*  *token*
-                               /*.txt            # root-level .txt: the shape of a dropped key file
+                               *.txt             # the shape of a dropped key file, at ANY depth (AMD-0008)
                              with a comment stating that a real documentation .txt must be added with
                              `git add -f` and a reviewer's attention, and that `.env.example` stays tracked
                              (it is already negated in the secrets block);
-                             then, AFTER the credential patterns, re-include governance documents so no future
-                             document can be silently ignored (AMD-0007):
-                               !/docs/**
+                             then, AFTER the credential patterns, re-include governance documents with
+                             EXTENSION-SCOPED negations so no future document is silently ignored and no
+                             non-Markdown credential shape is re-exposed (AMD-0007 as narrowed by AMD-0008):
+                               !/docs/**/*.md
                                !/*.md
-                             The negations must not re-include .env; verify every case with `git check-ignore -v`
+                             Verify every row of the AMD-0008 exposure matrix with `git check-ignore -v`
 .gitleaks.toml       modify  add a scoped `[[rules]]` entry `argus-bare-key-file` that flags any staged file whose
                              path matches `(?i)(polygon|fmp|ibkr|llm|api)[-_. ]?(key|token|secret)?\.(txt|key|json)$`
                              regardless of content, so an empty-looking or oddly formatted key file is still blocked;
@@ -77,6 +78,7 @@ the Delivery Controller used.
 - **AC6** — README documents the `/tmp`-only drop procedure (Auditor reads it).
 - **AC7** — Tests in §5 pass (`uv run python -m pytest -q tests/test_repo_hygiene.py`, or `python tests/test_repo_hygiene.py` if `uv` has not been set up on this branch).
 - **AC8** — Governance documents are never ignored, in either direction (AMD-0007): `git check-ignore -q docs/amendments/AMD-0099-secret-test.md` **fails**, `git check-ignore -q docs/work-orders/WO-0099-token-test.md` **fails**, `git check-ignore -q .env` **succeeds**, `git check-ignore -q polygon.txt` **succeeds**. Operator check: all four commands and exit statuses filed (`check-ignore` does not require the paths to exist).
+- **AC9** — The AMD-0008 exposure matrix holds exactly. Ignored: `.env`, `.env.local`, `secret.key`, `id.pem`, `polygon.txt`, `docs/x/polygon.txt`, `deep/a/b/fmp.txt`, `docs/x/.env`, `docs/secret.key`, `docs/id.pem`, `docs/credentials.json`, `sub/secret.md`. **Not** ignored: `docs/amendments/AMD-0011-secret-rotation.md`, `docs/work-orders/WO-0099-token-test.md`, `docs/runbook/OPERATIONS.md`, `docs/README.md`, `README.md`, `PID.md`, `.env.example`. Operator check: every path with its expected result and `git check-ignore -q` exit status filed; one row behaving the other way is a failure, not a note (AMD-0008).
 
 ## 7. Evidence the Delivery Controller must file
 `tests.md`, `auditor-prompt.md`, `audit.md`, `acceptance.md`,
@@ -90,6 +92,15 @@ The `/*.txt` rule is deliberately broad for this repository, which has no
 root-level `.txt` files; it is the pattern that would have caught the real
 near-miss. Keep the gitleaks rule narrow enough not to fire on `requirements.txt`-style
 names (the regex above requires a provider/credential word).
+
+**Accepted residual (AMD-0008).** Root-level Markdown whose *filename* looks
+credential-shaped — `secret.md`, `token.md`, `api-key.md` — remains
+stageable, because `!/*.md` must keep `README.md` and `PID.md` tracked.
+Accepted deliberately: a filename pattern was never going to protect prose,
+a secret pasted into `notes.md` or `README.md` is the same risk, and
+gitleaks **content** scanning is the control for all of them. Blocking
+`secret.md` while allowing `notes.md` would be theatre. Do not add filename
+rules for Markdown.
 
 `gitleaks` scans diff **content**, so the path-only rule cannot fire on a
 zero-byte key file (AMD-0007). That is accepted and bounds the rule's

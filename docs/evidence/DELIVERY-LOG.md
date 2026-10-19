@@ -8,3 +8,4 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-19T22:29Z  WO-0010  Audited GREEN  audited sha 57b0817447c220e31c90c11ae25f529e82ef59e7; evidence docs/evidence/WO-0010/
 2026-10-19T22:29Z  WO-0010  PR Open  branch wo/0010-secret-drop-hardening; awaiting ARCHITECT ACCEPTANCE
 2026-10-19T22:30Z  WO-0010  PR Open  PR #2
+2026-10-19T22:35Z  WO-0010  In Progress  AMD-0008 landed; PR #2 returned to draft; main (4d1f2f1) merged into branch for the single AMD-0007+AMD-0008 delta dispatch; prior audit superseded

@@ -63,9 +63,11 @@ Your verdict is evidence for the Architect; it is not acceptance.
    or unavailable. Any test that needs a secret or the
    network and is not marked `live` is a finding.
 5. **Public-repository hygiene.** `gitleaks detect --source <WORKTREE>
-   --redact`; also grep the diff for IPs, ports, account identifiers, URLs
-   of internal services, model alias names, and any hostname other than
-   the permitted `dell-debian` (AMD-0001).
+   --redact`; also grep the diff for IPs, ports, account identifiers, URLs of internal services, model alias names, and any hostname
+   other than the permitted `dell-debian` (AMD-0001). Also confirm commit
+   identity: `git log --format='%an <%ae> | %cn <%ce>' <BASE SHA>..<AUDITED
+   SHA> | sort -u` lists only the project identities in `PID.md` §9
+   (AMD-0009).
 6. **Architecture conformance.** Libraries, module boundaries, schema and
    formulas match the PID/ADRs the Work Order cites; configuration is read
    only via the settings module; SQL is parameterised; UTC canonical.
@@ -99,6 +101,7 @@ gitleaks_clean: yes | no
 access_mechanism: local | ssh | ssh+mount (<detail>)
 write_visibility_verified: yes | no | n/a (local)
 public_hygiene_clean: yes | no (<what>)
+commit_identity_clean: yes | no
 AC1_verified: yes | no
 AC2_verified: yes | no
 …

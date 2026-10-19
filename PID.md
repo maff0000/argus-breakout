@@ -162,6 +162,16 @@ inspect progress. Therefore, binding on every role:
 - CI runs `gitleaks detect` on every push and PR.
 - Test fixtures are synthetic or scrubbed; no fixture contains a real key,
   account id or host.
+- **Commit metadata is published content (AMD-0009).** Every commit carries
+  a project identity, never a personal one: the Architect as
+  `Claude (Architect) <noreply@anthropic.com>`, the Delivery Controller as
+  `Rogue (Delivery Controller) <noreply@anthropic.com>`. Set this
+  repo-locally for **`author.*` and `committer.*`, not only `user.*`** — a
+  host's global configuration may define `author`/`committer` sections that
+  silently override `user.*`. Verify before every push:
+  `git log --format='%an <%ae> | %cn <%ce>' <range> | sort -u` must list
+  only those two identities. A personal name or address reaching a public
+  commit cannot be undone by a later commit.
 - Logs are structured JSON with secrets redacted; no request URL containing
   an API key is logged.
 
@@ -184,8 +194,12 @@ one branch per Work Order (`wo/NNNN-<slug>`) cut from the Work Order's Base
 SHA; the Delivery Controller alone commits (Implementers never do); every
 PR carries its audit evidence; merge is a merge commit by the Delivery
 Controller only after Architect Acceptance (PR comment in fixed form +
-`docs/evidence/WO-NNNN/acceptance.md`). No force-push, no squash, no
-amending commits cited by SHA.
+`docs/evidence/WO-NNNN/acceptance.md`). No force-push, no squash, no amending commits cited by SHA. No rebase,
+merge or cherry-pick may be scripted to continue through a conflict: a
+conflict stops the operation for inspection, to be resolved by hand or
+aborted. After any history operation on a Work Order branch, re-verify the
+Base SHA in-scope diff and the commit identities before proceeding
+(AMD-0009).
 
 ## 12. Quality and Testing
 
