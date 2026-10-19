@@ -69,10 +69,17 @@ Your verdict is evidence for the Architect; it is not acceptance.
 6. **Architecture conformance.** Libraries, module boundaries, schema and
    formulas match the PID/ADRs the Work Order cites; configuration is read
    only via the settings module; SQL is parameterised; UTC canonical.
-7. **Evidence quality.** Numbers you report carry their construction path
+7. **Portability (ADR-0008).** Confirm the application is container-ready:
+   `grep -rnE "['\"]/(srv|etc|usr|opt|home|var)/" argus/` and
+   `grep -rniE "\b(uv|systemd|systemctl|apt-get)\b" argus/` return nothing;
+   all filesystem paths derive from `settings.argus_store_dir`,
+   `argus_out_dir` or `argus_config_dir`; no writes outside those (plus
+   `tempfile`); no endpoint hardcoded; logs go to stdout. Host-coupled
+   files under `ops/` are exempt but must contain no application logic.
+8. **Evidence quality.** Numbers you report carry their construction path
    and population (Forge `docs/EVIDENCE-DOCTRINE.md`). A refutation gets the
    same scrutiny as a confirmation.
-8. **Presentation target.** If `PRODUCT_USABLE` or above **and** the diff
+9. **Presentation target.** If `PRODUCT_USABLE` or above **and** the diff
    touches anything rendered in a browser, Forge's mandatory real-browser
    gate applies in full. For `FUNCTIONAL_ONLY` with file-based outputs
    (Markdown/HTML written to disk), inspect the produced artefact itself,

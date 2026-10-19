@@ -75,24 +75,31 @@ NO GIT RECORD → NOT AUTHORITY.        (chat, memory and assumptions carry no w
    tests, fixtures, examples, logs or your report. Read settings through
    the project's settings module; fail loudly when a required variable is
    missing. This repository is public.
-5. **Tests must run offline with no `.env` and no network.** Use recorded
+5. **Portability (ADR-0008).** The application must be container-ready: no
+   absolute path literals in `argus/` (every path comes from
+   `settings.argus_store_dir`, `argus_out_dir` or `argus_config_dir`);
+   write only under the store and out directories (plus `tempfile`); treat
+   `127.0.0.1` as a default, never an assumption; keep the CLI the only
+   entrypoint; log to stdout; never import or shell out to `uv`, `systemd`,
+   `apt` or anything under `/srv/argus-breakout-tools`; never require root.
+6. **Tests must run offline with no `.env` and no network.** Use recorded
    fixtures under `tests/fixtures/`. Anything needing a live service is
    marked `@pytest.mark.live` and is skipped by default. Never fabricate
    commands, output or results; report what you ran and what it showed.
-6. **If your new tests are the evidence a behaviour works, prove they can
+7. **If your new tests are the evidence a behaviour works, prove they can
    fail:** disable the behaviour, re-run, report how many failed. A low
    number is a disclosure, not a failure to hide.
-7. **Prefer the project's chosen libraries** (see PID §8 / ADRs). No new
+8. **Prefer the project's chosen libraries** (see PID §8 / ADRs). No new
    stacks, build systems, or external runtime dependencies without the Work
    Order saying so.
-8. **UTC is canonical** in anything persisted or logged. Dates are ISO-8601.
-9. **SQL is parameterised.** Never build a query by string formatting with
+9. **UTC is canonical** in anything persisted or logged. Dates are ISO-8601.
+10. **SQL is parameterised.** Never build a query by string formatting with
    external input. Symbols are validated against `^[A-Z][A-Z0-9.\-]{0,9}$`
    at every boundary.
-10. **Clean up** anything you started (processes, temp files, test
+11. **Clean up** anything you started (processes, temp files, test
     databases) before reporting; verify by checking, not by assuming.
-11. **Never spawn another agent.**
-12. Report exactly one of `completed`, `blocked`, `failed`, with reasons.
+12. **Never spawn another agent.**
+13. Report exactly one of `completed`, `blocked`, `failed`, with reasons.
 
 ## What to return to the Delivery Controller
 

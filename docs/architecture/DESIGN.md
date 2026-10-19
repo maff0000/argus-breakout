@@ -67,7 +67,7 @@ ADR-0003 (data sources), ADR-0004 (model gateway), ADR-0005
 │   ├── bootstrap               verifies gitleaks, sets core.hooksPath
 │   └── systemd/                argus-nightly.service / .timer (installed by operator)
 ├── scripts/hooks/pre-commit    gitleaks gate
-├── config/
+├── config/                     = ARGUS_CONFIG_DIR (AMD-0004); never read by a package-relative path
 │   ├── universe.yaml           benchmark + sector ETFs, ratio pairs, GICS maps
 │   ├── features.yaml           lookbacks and parameters (single source of truth)
 │   └── playbooks.yaml          factor weights per regime, list definitions (0004)
@@ -346,6 +346,18 @@ stop 1.5·ATR14 (long) / 2·ATR14 (short); position cap 10% of equity; max
 - Logging: structured JSON, secrets redacted, request ids; MCP access log
   retained 90 days. No PII stored.
 - Backups: nightly `store/` snapshot to a second disk.
+
+**Portability (ADR-0008, AMD-0004).** The application is built
+container-ready and packaged in PID-ARGUS-0006: no absolute paths in
+`argus/`, writes confined to `ARGUS_STORE_DIR` and `ARGUS_OUT_DIR`,
+configuration (including `ARGUS_CONFIG_DIR`) and every network endpoint
+from environment variables, the CLI as the only entrypoint, structured logs
+to stdout, no root at runtime. The `uv.lock` of ADR-0007 is the input to
+the future image build (`uv sync --frozen --no-dev`); the development
+toolchain under `/srv/argus-breakout-tools` is never part of the delivered
+artefact. Everything host-coupled (systemd units, `ops/nightly.sh`, backup
+rsync) lives under `ops/` with no application logic, so a container
+scheduler replaces it without touching `argus/`.
 
 ## 11. Phase map
 See `PID.md` §6. Phase PIDs in `docs/pids/` carry the Work Order

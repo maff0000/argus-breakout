@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.7 (`universe refresh`), §8.8 ; `DESIGN.md` §3.1, §3.3 (GICS rule), §4 ; ADR-0003, ADR-0005 |
-| **Applicable Amendments** | AMD-0002 |
+| **Applicable Amendments** | AMD-0002, AMD-0004 |
 | **Base SHA** | main at Closure of WO-0002 |
 | **Branch** | `wo/0003-universe-and-membership` |
 | **Depends on** | WO-0002 |
@@ -58,7 +58,9 @@ yfinance code, no changes to `store.py`/`schema.py` beyond none, no
 `docs/` changes.
 
 ## 4. Design constraints
-PID §8.4, §8.8, §8.9; ADR-0005. Industry group is mandatory: a symbol with
+PID §8.8, §8.9; ADR-0005; ADR-0008. `config/universe.yaml` and
+`config/gics.yaml` are loaded from `settings.argus_config_dir`, never a
+path relative to the package (AMD-0004). Industry group is mandatory: a symbol with
 no mapping goes through the FMP `profile` fallback; if still unmapped it
 is counted in `n_missing_group` and the command exits 1 — never a silent
 default. The FMP api key is only ever a query parameter added inside

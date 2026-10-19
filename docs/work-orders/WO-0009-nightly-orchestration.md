@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §3, §8.7 (`nightly`), §13 ; `DESIGN.md` §10 |
-| **Applicable Amendments** | AMD-0002, AMD-0003 |
+| **Applicable Amendments** | AMD-0002, AMD-0003, AMD-0004 |
 | **Base SHA** | main at Closure of WO-0003, WO-0006, WO-0007, WO-0008 |
 | **Branch** | `wo/0009-nightly-orchestration` |
 | **Depends on** | WO-0003, WO-0006, WO-0007, WO-0008 |
@@ -56,7 +56,11 @@ channel; no changes to systemd beyond the two units and wrapper; no
 `docs/` outside `docs/runbook/`.
 
 ## 4. Design constraints
-DESIGN §10 schedule and security. The service user owns `store/` and
+DESIGN §10 schedule and security, plus ADR-0008: the systemd unit and
+`ops/nightly.sh` carry **no application logic** beyond computing the target
+date, and must be replaceable by a container scheduler without any change
+under `argus/` (AMD-0004). `argus nightly` must run correctly when invoked
+directly, with no systemd present. The service user owns `store/` and
 `out/`; the repo checkout is read-only to it except those two paths. No
 secrets in unit files (EnvironmentFile only). `run_nightly` is
 idempotent for a date: re-running after a partial failure skips steps

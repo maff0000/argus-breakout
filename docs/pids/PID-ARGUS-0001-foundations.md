@@ -81,6 +81,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
     argus_store_dir: Path = Path("store")
     argus_out_dir: Path = Path("out")
+    argus_config_dir: Path = Path("config")        # AMD-0004
     argus_log_level: str = "INFO"
     polygon_api_key: SecretStr | None = None
     fmp_api_key: SecretStr | None = None
@@ -103,7 +104,10 @@ class ConfigError(RuntimeError): ...
 def get_settings() -> Settings  # cached
 ```
 Providers call `settings.require("polygon_api_key")` in their constructor.
-Secrets are `SecretStr`; `repr`/logs never reveal them.
+Secrets are `SecretStr`; `repr`/logs never reveal them. **Every filesystem
+path in the application comes from `argus_store_dir`, `argus_out_dir` or
+`argus_config_dir` (ADR-0008, AMD-0004); nothing resolves against the
+repository root, the package directory or the current working directory.**
 
 ### 8.3 Logging (`argus/logging.py`)
 `configure_logging(level)` → structlog JSON to stdout, UTC ISO timestamps,
@@ -184,6 +188,9 @@ No Work Order edits another Work Order's command module. This keeps the
 P0-C and P0-D groups free of file-level conflicts.
 
 ### 8.8 Configuration files
+Loaded from `settings.argus_config_dir` (default `config/`), never from a
+path relative to the package or found by walking parent directories
+(ADR-0008, AMD-0004).
 - `config/universe.yaml`: `benchmarks: [SPY, RSP]`, `sector_etfs: {...}`,
   `ratio_pairs: [[SMH,SPY], ...]`, `overlay_watchlist: []`.
 - `config/gics.yaml`: `sectors: [11 names]`, `industry_groups: {name: sector}`
@@ -195,6 +202,14 @@ P0-C and P0-D groups free of file-level conflicts.
 No secrets/hosts/ports/account ids in source, tests, fixtures, logs or
 docs. SQL parameterised. Symbols validated. UTC canonical. Config via
 environment only.
+
+**Portability (ADR-0008, AMD-0004).** No absolute paths in `argus/`; writes
+only under `ARGUS_STORE_DIR` and `ARGUS_OUT_DIR` (plus `tempfile`); every
+network endpoint configurable, `127.0.0.1` a default and never an
+assumption; the CLI is the only entrypoint and needs no host service;
+nothing in `argus/` imports or shells out to `uv`, `systemd`, `apt` or
+anything under `/srv/argus-breakout-tools`; logs to stdout; no root
+required at runtime.
 
 ## 9. Public Repository Security
 As `PID.md` §9. WO-0001 delivers the gitleaks hook, `./ops/bootstrap`,

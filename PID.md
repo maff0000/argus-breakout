@@ -82,10 +82,13 @@ Delivered in phases, each a Phase PID with its own Work Orders:
 | PID-ARGUS-0003 | Brief & Query Surface | evidence pack, gateway client, nightly brief, grading tables, read-only MCP server over the store |
 | PID-ARGUS-0004 | Calibration & Lists | lead-time study, factor IC, threshold tuning, playbooks, ranked lists, paper-account sizing, IBKR watchlist push, paper trade log |
 | PID-ARGUS-0005 | ML Ranking (optional) | gradient-boosted ranker with purged CV; deployed only if it beats the rules baseline out of sample |
+| PID-ARGUS-0006 | Containerisation | multi-stage Dockerfile (`uv sync --frozen --no-dev`), compose with `store/`+`out/` volumes and env-file, container scheduler, production deployment notes |
 
 Only PID-ARGUS-0001 is Approved at v1.0 of this document. Later Phase PIDs
 are authored by the Architect when the preceding phase closes, informed by
-its evidence.
+its evidence. PID-ARGUS-0006 is planned, not yet authored: the application
+is built **container-ready** from WO-0001 under ADR-0008 and packaged in
+that phase (AMD-0004).
 
 ## 7. Non-Goals
 
@@ -96,6 +99,9 @@ its evidence.
 - Intraday data or real-time streaming.
 - A served web dashboard (would be a new Phase PID with a new presentation
   target).
+- Containerisation **in this phase**. Docker packaging is deferred to
+  PID-ARGUS-0006, not excluded; ADR-0008's portability constraints are
+  binding on every Work Order in the meantime (AMD-0004).
 - Any Forge framework changes; Argus does not import or embed Forge.
 
 ## 8. Architecture
@@ -124,6 +130,10 @@ works within:
   level. (ADR-0005)
 - **IBKR write path:** local gateway only; no third-party connector writes.
   (ADR-0006)
+- **Portability (AMD-0004):** built container-ready — no absolute paths in
+  `argus/`, writes only under `ARGUS_STORE_DIR`/`ARGUS_OUT_DIR`, every
+  network endpoint configurable, the CLI is the only entrypoint, logs to
+  stdout, no root at runtime. Docker packaging is PID-ARGUS-0006. (ADR-0008)
 - **Configuration:** environment variables only, read through
   `argus/settings.py`; required variables fail loudly at startup.
 - **Time:** UTC canonical in storage and logs; trading dates are exchange
@@ -131,7 +141,8 @@ works within:
 
 What may not change without an Amendment: the storage engine, the package
 layout, the data-source roles, the schema in DESIGN.md §3.2, any formula in
-DESIGN.md §5–6, the security rules in §9 below.
+DESIGN.md §5–6, ADR-0008's portability constraints, the security rules in
+§9 below.
 
 ## 9. Public Repository Security
 
@@ -194,7 +205,9 @@ amending commits cited by SHA.
 This master PID closes when PID-ARGUS-0001 through 0004 are Closed and the
 Product Owner confirms, in a PR comment on the final Work Order, that the
 Target Outcome in §3 is met on the delivery host for ten consecutive
-trading days. PID-ARGUS-0005 is optional and does not gate closure.
+trading days. PID-ARGUS-0005 is optional and does not gate closure. Containerisation
+(PID-ARGUS-0006) does not gate closure either, but ADR-0008's portability
+constraints are part of every phase's acceptance (AMD-0004).
 
 ## 14. Development Inputs
 
