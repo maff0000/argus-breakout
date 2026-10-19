@@ -35,8 +35,8 @@ CREDENTIAL_NAMES = [
 
 def _ignored(repo: Path, name: str) -> bool:
     """True if `git check-ignore -q` says `name` is ignored in `repo`."""
-    result = subprocess.run(
-        ["git", "check-ignore", "-q", name],
+    result = subprocess.run(  # noqa: S603 - fixed, trusted argv; name is a test constant
+        ["git", "check-ignore", "-q", name],  # noqa: S607 - git from PATH, throwaway repo
         cwd=repo,
         capture_output=True,
         check=False,
@@ -52,7 +52,11 @@ class _TempRepo:
     def __enter__(self) -> Path:
         self._tmp = tempfile.mkdtemp(prefix="hygiene-")
         repo = Path(self._tmp)
-        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(  # noqa: S603 - fixed, trusted argv
+            ["git", "init", "-q"],  # noqa: S607 - git from PATH, throwaway repo
+            cwd=repo,
+            check=True,
+        )
         shutil.copy(ROOT / ".gitignore", repo / ".gitignore")
         return repo
 
@@ -92,7 +96,7 @@ def main() -> int:
             try:
                 fn()
                 print(f"PASS {name}")
-            except Exception as exc:  # noqa: BLE001 - report every failure
+            except Exception as exc:  # report every failure
                 failures += 1
                 print(f"FAIL {name}: {exc!r}")
     return 1 if failures else 0
