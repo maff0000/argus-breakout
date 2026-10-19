@@ -39,3 +39,9 @@ htmlcov/
 *api_key*
 *token*
 /*.txt
+# Governance documents must never be silently ignored (AMD-0007): they reach
+# main by direct commit, so a name containing "secret" or "token" must not hide
+# one. These negations come AFTER the credential patterns above and do not
+# re-include .env.
+!/docs/**
+!/*.md
