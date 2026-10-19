@@ -140,8 +140,21 @@ are Architect-only.
 
 ## 7. Branching, PRs, acceptance, merge
 
-- `main` is protected. Nothing is committed to `main` except by merge of an
-  accepted PR.
+- `main` is protected and has exactly **two** commit channels (AMD-0005):
+  1. **Governance (Architect, direct).** PIDs, Amendments, ADRs, Work
+     Orders, `docs/governance/**` (including the agent prompts and
+     templates) and `docs/architecture/**` are committed to `main` by the
+     **Architect** directly. These artefacts confer the authority the Work
+     Order chain runs on, so they cannot themselves require a Work Order
+     (`NO PID → NO WORK ORDER` would otherwise be a regress), and an
+     Auditor audits implementation *against* them rather than auditing
+     them. The Architect commits nothing else by this channel — never
+     application code, tests, CI, packaging or repository plumbing.
+  2. **Everything else (Delivery Controller, by accepted PR).** All
+     application code, tests, configuration files, CI, repository plumbing
+     and evidence reaches `main` only by merge of a PR carrying an
+     independent audit and Architect Acceptance.
+  A commit that mixes the two channels is a governance defect: split it.
 - One branch per Work Order: `wo/NNNN-<slug>`, cut from the Base SHA.
 - The Delivery Controller commits Implementer diffs to that branch after
   review (Forge: the Engineer never commits). Commit messages cite the
@@ -190,7 +203,10 @@ improvised architecture is not.
 
 A defect found after merge, a missed criterion, or a refinement is a **new
 Work Order** under the same PID (or an Amendment if the PID itself was
-wrong). It goes through the full chain. Hotfixes do not exist.
+wrong). It goes through the full chain. Hotfixes do not exist. This applies
+to repository plumbing and safety fixes as much as to application defects:
+the Architect writes the Work Order, the chain delivers it. The Architect
+does not fix code directly, however small the change (AMD-0005).
 
 ## 10. Public repository rules
 

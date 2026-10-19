@@ -19,12 +19,22 @@ mirror; the Work Order file is authoritative.
 | [WO-0008](WO-0008-ibkr-reconcile-and-iv.md) | IBKR reconciliation and implied volatility | WO-0007 | P0-E | Approved |
 | [WO-0009](WO-0009-nightly-orchestration.md) | Nightly orchestration, systemd, runbook, phase acceptance | WO-0003, 0006, 0007, 0008 | P0-F | Approved |
 
-Execution order for the Delivery Controller: A → B → C (three concurrent)
-→ D (two concurrent) → E → F. Base SHAs for dependent Work Orders are
-by-reference (`main at Closure of …`) and are resolved by the Delivery
-Controller when their dependencies close (DELIVERY-CHAIN §6.3).
+## PID-ARGUS-0000 — repository security (corrective)
+
+| WO | Title | Depends on | Group | Status |
+|---|---|---|---|---|
+| [WO-0010](WO-0010-secret-drop-hardening.md) | Secret-drop hardening: ignore credential-shaped files, document the drop procedure | — | P0-A (independent of WO-0001) | Approved |
+
+Execution order for the Delivery Controller: **WO-0001 + WO-0010
+concurrently** (group P0-A, independent — WO-0010 touches no path in
+WO-0001's scope) → B → C (three concurrent) → D (two concurrent) → E → F.
+Base SHAs for dependent Work Orders are by-reference (`main at Closure of
+…`) and are resolved by the Delivery Controller when their dependencies
+close (DELIVERY-CHAIN §6.3). WO-0001's Base SHA was rebased by Architect
+determination — see its §11.
 
 ## Approval record
-All nine Work Orders above were approved by the Architect in the commit
-that introduced this index; the `Commit:` line in each Work Order's §9
-refers to that commit (see `git log -- docs/work-orders/`).
+WO-0001 … WO-0009 were approved by the Architect in the commit that
+introduced this index; WO-0010 in the commit that added it (AMD-0005). Each
+Work Order's §9 `Commit:` line refers to its approving commit — see
+`git log -- docs/work-orders/`.

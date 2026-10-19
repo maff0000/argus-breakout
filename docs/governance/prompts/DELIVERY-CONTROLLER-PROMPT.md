@@ -175,6 +175,9 @@ on that Work Order (continue with other unblocked Work Orders) when:
 - Let an Implementer commit, push or open a PR.
 - Give the Auditor information derived from the Implementer's reasoning.
 - Merge without both acceptance artefacts.
+- Commit anything to `main` directly, or merge a PR that mixes governance
+  artefacts with code — the two commit channels in DELIVERY-CHAIN §7 are
+  separate (AMD-0005).
 - Use `--no-verify`, force-push, rebase or amend any commit already cited
   by SHA in evidence.
 - Put configuration or secrets in source. Everything runtime-specific comes

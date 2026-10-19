@@ -5,7 +5,7 @@
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.1, §8.2, §8.3, §8.7 (skeleton only), §9 |
 | **Applicable Amendments** | AMD-0002, AMD-0003, AMD-0004 |
-| **Base SHA** | `aec11259c066d7adb6db867c80bdb0c8b5c62a47` |
+| **Base SHA** | `07f2e7067d6c4ea9c17618a8cb53c0a46ca236b3` (rebased from `aec1125…` by Architect determination, §11) |
 | **Branch** | `wo/0001-repo-skeleton` |
 | **Depends on** | none |
 | **Parallel group** | P0-A |
@@ -104,3 +104,34 @@ Commit:      the commit introducing docs/work-orders/README.md (git log -1 -- do
 ## 10. Delivery log (DC appends)
 ```
 ```
+
+## 11. Architect determinations
+
+### D1 — Base SHA rebase, 2026-10-19 (DELIVERY-CHAIN §6.3)
+The Delivery Controller correctly stopped: the §6.3 check from the original
+Base SHA `aec11259c066d7adb6db867c80bdb0c8b5c62a47` to `main` HEAD was **not**
+empty.
+
+```
+git diff --stat aec1125 07f2e70 -- pyproject.toml uv.lock requirements.lock argus tests .github/workflows/ci.yml
+ .github/workflows/ci.yml | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+git log --oneline aec1125..07f2e70 -- .github/workflows/ci.yml
+ 21e7f9e AMD-0003: complete the application (WO-0001/0009, prompts, CI, master PID)
+```
+
+**Determination.** The single in-scope change is `.github/workflows/ci.yml`,
+made by AMD-0003 — the same amendment that rewrote this Work Order's own
+scope line for that file and its AC1/AC3/AC5. It is the authorised effect of
+an approved Amendment, not a conflicting third-party change, so the
+rebase is authorised rather than the Work Order re-scoped.
+
+**Base SHA is `07f2e7067d6c4ea9c17618a8cb53c0a46ca236b3`.** The in-scope diff
+from `21e7f9e` to `07f2e70` is empty. Per §6.3 the Delivery Controller may
+cut the branch from `07f2e70` or from any later `main` HEAD whose in-scope
+diff from `07f2e70` is empty (the commit carrying this determination is such
+a commit: it touches only `docs/**`, `.gitignore`-adjacent Work Order text
+and no path in §2). Record whichever SHA is used, in the Base SHA field.
+
+— Claude (Architect)
