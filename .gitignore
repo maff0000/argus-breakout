@@ -1,0 +1,24 @@
+# secrets and local config
+.env
+.env.*
+!.env.example
+# data and outputs (host only)
+store/
+out/
+*.duckdb
+*.duckdb.wal
+# python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+# editors / os
+.idea/
+.vscode/
+.DS_Store

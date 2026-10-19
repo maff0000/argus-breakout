@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Forge pre-commit: block any commit containing a detected secret.
+#
+# Committed in-repo (not a local .git/hooks file) and activated via
+# `git config core.hooksPath scripts/hooks` so the control itself is durable
+# Forge doctrine, not host-local convenience. Public repo — this fails
+# LOUDLY and BLOCKS on a missing scanner rather than silently letting an
+# unscanned commit through.
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "[argus pre-commit] BLOCKED: gitleaks is not installed on this host." >&2
+  echo "[argus pre-commit] Install it before committing — this is a public repo:" >&2
+  echo "[argus pre-commit]   https://github.com/gitleaks/gitleaks/releases" >&2
+  exit 1
+fi
+
+if ! gitleaks protect --staged --redact --verbose; then
+  echo "[argus pre-commit] BLOCKED: gitleaks found a likely secret in staged changes." >&2
+  echo "[argus pre-commit] Fix the finding above, or if it is a genuine false positive," >&2
+  echo "[argus pre-commit] add a scoped rule to .gitleaks.toml — never bypass with --no-verify." >&2
+  exit 1
+fi
+
+exit 0

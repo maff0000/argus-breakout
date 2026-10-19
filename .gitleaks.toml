@@ -1,0 +1,15 @@
+# Argus-Breakout gitleaks configuration. Extends the default rules.
+# Add scoped allowlist entries here for genuine false positives — never
+# bypass the hook with --no-verify.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "placeholders in documentation and examples"
+regexes = [
+  '''<[a-z0-9_-]+>''',
+  '''replace-me''',
+]
+paths = [
+  '''\.env\.example$''',
+]
