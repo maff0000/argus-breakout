@@ -10,7 +10,7 @@
 | **Depends on** | none |
 | **Parallel group** | P0-A (independent of WO-0001; touches no path in its scope) |
 | **Presentation target** | FUNCTIONAL_ONLY |
-| **PR** | — |
+| **PR** | https://github.com/maff0000/argus-breakout/pull/2 |
 | **Evidence** | `docs/evidence/WO-0010/` |
 
 ## 1. Objective
