@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -110,6 +110,29 @@ def test_members_on(store):
     assert set(store.members_on(date(2022, 3, 1))) == {"AAA", "BBB", "CCC"}
     assert set(store.members_on(date(2023, 1, 1))) == {"AAA", "CCC"}
     assert set(store.members_on(date(2024, 1, 1))) == {"AAA"}
+
+
+def test_members_on_boundaries(store):
+    s, e = date(2021, 3, 10), date(2021, 9, 20)
+    s2 = date(2022, 4, 5)
+    m = pl.DataFrame(
+        {
+            "symbol": ["AAA", "BBB"],
+            "start_date": [s, s2],
+            "end_date": [e, None],
+            "source": ["t", "t"],
+        },
+        schema_overrides={"end_date": pl.Date},
+    )
+    store.upsert("membership", m, ["symbol", "start_date"])
+    # closed interval [s, e] is inclusive at both ends
+    assert "AAA" in store.members_on(s)
+    assert "AAA" in store.members_on(e)
+    assert "AAA" not in store.members_on(s - timedelta(days=1))
+    assert "AAA" not in store.members_on(e + timedelta(days=1))
+    # open-ended interval (NULL end_date)
+    assert "BBB" in store.members_on(s2)
+    assert "BBB" in store.members_on(date(2099, 12, 31))
 
 
 def test_log_ingest(store):
