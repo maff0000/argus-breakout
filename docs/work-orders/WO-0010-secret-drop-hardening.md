@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Approved |
+| **Status** | In Progress |
 | **Parent PID** | `PID.md` (PID-ARGUS-0000) §9 Public Repository Security |
 | **Applicable Amendments** | AMD-0005, AMD-0006, AMD-0007 |
-| **Base SHA** | main at approval of this Work Order (the commit introducing this file) |
+| **Base SHA** | `02ddd97de53c34fb2914cab17ca7cf3e832d659f` (rebased from `c582c61…` under §6.3: in-scope diff empty; carries AMD-0006/0007 text) |
 | **Branch** | `wo/0010-secret-drop-hardening` |
 | **Depends on** | none |
 | **Parallel group** | P0-A (independent of WO-0001; touches no path in its scope) |
