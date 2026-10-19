@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Approved |
+| **Status** | Closed |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.4, §8.5, §8.6 (base only), §8.7 (`init-store`) ; `DESIGN.md` §3.2 |
 | **Applicable Amendments** | AMD-0002, AMD-0011 |
-| **Base SHA** | main at Closure of WO-0001 |
+| **Base SHA** | 75b230dacb555dbe2f3f4347d640262348bf2b4a |
 | **Branch** | `wo/0002-schema-and-store` |
 | **Depends on** | WO-0001 |
 | **Parallel group** | P0-B |

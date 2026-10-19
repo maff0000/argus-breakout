@@ -14,6 +14,7 @@ app.add_typer(adjust.app, name="adjust")
 app.add_typer(ibkr.app, name="ibkr")
 
 # --- command module imports (append only; one line per Work Order) ---
+import argus.commands.store_cmds  # noqa: F401, E402
 
 
 def _version_callback(value: bool) -> None:
@@ -34,9 +35,3 @@ def main(
 ) -> None:
     """Argus-Breakout data pipeline."""
 
-
-@app.command("init-store")
-def init_store() -> None:
-    """Initialise the store (stub until WO-0002)."""
-    typer.echo("store not implemented (WO-0002)", err=True)
-    raise typer.Exit(2)
