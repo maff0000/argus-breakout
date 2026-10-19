@@ -28,9 +28,10 @@ https://github.com/maff0000/argus-breakout.git
 ```
 
 Verified against `git remote -v` on the clone this PID was authored in
-(2026-10-19, repository empty before this commit). The delivery host is
-referred to only as "the delivery host"; its name is not recorded here
-(public repository).
+(2026-10-19, repository empty before this commit). Delivery host: `dell-debian` (hostname only — Product Owner decision
+2026-10-19, AMD-0001). `PROJECT_ROOT=/srv/argus-breakout` on that host. No
+IP address, port, user credential or network detail of the host is
+recorded anywhere in this repository.
 
 ## 2. Purpose
 
@@ -136,8 +137,11 @@ This repository is public until project completion so the Architect can
 inspect progress. Therefore, binding on every role:
 
 - Never commit `.env`, API keys, tokens, IBKR account identifiers or
-  usernames, internal hostnames, IP addresses, ports, model-gateway URLs or
-  model alias names, or any description of the Product Owner's network.
+  usernames, IP addresses, ports, model-gateway URLs or model alias names,
+  or any description of the Product Owner's network. The single exception
+  is the bare hostname of the delivery host, `dell-debian`, accepted as
+  disclosable by the Product Owner (AMD-0001); no other hostname may
+  appear.
 - `.env.example` documents every variable with a placeholder value.
 - The committed pre-commit hook (`scripts/hooks/pre-commit`, activated by
   `./ops/bootstrap` via `core.hooksPath`) runs `gitleaks` and blocks the

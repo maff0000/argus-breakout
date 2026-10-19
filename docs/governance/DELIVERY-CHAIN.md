@@ -195,9 +195,10 @@ wrong). It goes through the full chain. Hotfixes do not exist.
 ## 10. Public repository rules
 
 This repository is public until project completion. Never commit: `.env`
-or any credential; API keys; IBKR account identifiers or usernames;
-internal hostnames, IP addresses or ports; model-gateway URLs or alias
-names; anything describing the Human's home network. Configuration is
+or any credential; API keys; IBKR account identifiers or usernames; IP
+addresses or ports; hostnames other than the delivery host `dell-debian`
+(the one permitted hostname, AMD-0001); model-gateway URLs or alias names;
+anything describing the Human's home network. Configuration is
 supplied by environment variables documented as placeholders in
 `.env.example`. The committed pre-commit hook runs `gitleaks` and blocks
 commits when the scanner is missing; `--no-verify` is forbidden.

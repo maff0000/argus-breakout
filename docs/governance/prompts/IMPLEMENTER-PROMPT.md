@@ -61,8 +61,9 @@ NO GIT RECORD → NOT AUTHORITY.        (chat, memory and assumptions carry no w
 3. **Do not run `git commit`, `git push`, `gh pr`, or edit git history.**
    Leave your changes in the worktree for the Delivery Controller to review
    and commit.
-4. **Configuration only via environment.** No secrets, hostnames, IPs,
-   ports, account identifiers, gateway URLs or model alias names in source,
+4. **Configuration only via environment.** No secrets, IPs, ports, account
+   identifiers, gateway URLs, model alias names, or hostnames other than
+   the permitted delivery host name `dell-debian` (AMD-0001) in source,
    tests, fixtures, examples, logs or your report. Read settings through
    the project's settings module; fail loudly when a required variable is
    missing. This repository is public.

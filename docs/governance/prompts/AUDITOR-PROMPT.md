@@ -61,8 +61,9 @@ Your verdict is evidence for the Architect; it is not acceptance.
    and network disabled or unavailable. Any test that needs a secret or the
    network and is not marked `live` is a finding.
 5. **Public-repository hygiene.** `gitleaks detect --source <WORKTREE>
-   --redact`; also grep the diff for hostnames, IPs, ports, account
-   identifiers, URLs of internal services, and model alias names.
+   --redact`; also grep the diff for IPs, ports, account identifiers, URLs
+   of internal services, model alias names, and any hostname other than
+   the permitted `dell-debian` (AMD-0001).
 6. **Architecture conformance.** Libraries, module boundaries, schema and
    formulas match the PID/ADRs the Work Order cites; configuration is read
    only via the settings module; SQL is parameterised; UTC canonical.

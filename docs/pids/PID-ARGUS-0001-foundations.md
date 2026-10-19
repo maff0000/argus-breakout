@@ -5,7 +5,8 @@
 **Design references:** `docs/architecture/DESIGN.md` §2, §3, §4, §10; ADR-0002, ADR-0003, ADR-0005, ADR-0006
 
 ## 1. Identity
-As `PID.md` §1. `PROJECT_ROOT=/srv/argus-breakout`, `maff0000/argus-breakout`.
+As `PID.md` §1. Delivery host `dell-debian`; `PROJECT_ROOT=/srv/argus-breakout`;
+`maff0000/argus-breakout` (AMD-0001).
 
 ## 2. Purpose
 Stand up the data foundation every later phase depends on: a reproducible
