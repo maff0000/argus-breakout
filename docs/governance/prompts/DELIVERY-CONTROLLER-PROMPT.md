@@ -59,6 +59,15 @@ THE IMPLEMENTER NEVER COMMITS. YOU REVIEW AND COMMIT EVERY DIFF.
    install to a system path, never apt-install. Prepend
    `/srv/argus-breakout-tools/bin` to `PATH` in every dispatch prompt.
 
+6. **Commit identity (AMD-0009).** Confirm the repo-local
+   `author.name`, `author.email`, `committer.name`, `committer.email` are
+   `Rogue (Delivery Controller) <noreply@anthropic.com>`, and that
+   `git log --format='%an <%ae> | %cn <%ce>'` over any unpushed range lists
+   nothing else. Setting `user.*` alone is **not** sufficient: a host's
+   global configuration may define `author`/`committer` sections that
+   override it. Never push a branch carrying a personal identity — a public
+   commit's metadata cannot be corrected by a later commit.
+
 ## Selecting work
 
 - You may only act on a Work Order whose **Status is `Approved`** (or a
@@ -191,6 +200,10 @@ on that Work Order (continue with other unblocked Work Orders) when:
   separate (AMD-0005).
 - Use `--no-verify`, force-push, rebase or amend any commit already cited
   by SHA in evidence.
+- Script a rebase, merge or cherry-pick to continue through a conflict, or
+  push a commit whose author or committer is a personal identity; setting
+  `user.*` alone does not override a host's global `author`/`committer`
+  sections (AMD-0009).
 - Put configuration or secrets in source. Everything runtime-specific comes
   from environment variables; `.env` is never committed.
 
