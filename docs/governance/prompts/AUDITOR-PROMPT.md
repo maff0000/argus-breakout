@@ -96,6 +96,8 @@ scope_fidelity: yes | no (<paths>)
 offline_tests_pass: yes | no (<which failed>)
 non_vacuity_established: yes | no | n/a (<reason>)
 gitleaks_clean: yes | no
+access_mechanism: local | ssh | ssh+mount (<detail>)
+write_visibility_verified: yes | no | n/a (local)
 public_hygiene_clean: yes | no (<what>)
 AC1_verified: yes | no
 AC2_verified: yes | no

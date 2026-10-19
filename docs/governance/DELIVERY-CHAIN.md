@@ -181,6 +181,35 @@ are Architect-only.
 - After merge: Work Order → `Closed`, `DELIVERY-LOG.md` appended, branch
   deleted.
 
+### 7.1 Worktree access and cross-host provenance (AMD-0006)
+
+The Delivery Controller chooses how it and its subagents reach the worktree
+files. Whatever it chooses:
+
+1. **Exclusive path per dispatch.** Each concurrent dispatch gets a
+   worktree that no other dispatch can reach by any path. A shared mount
+   point serving two dispatches is prohibited; use a distinct mount or a
+   distinct per-Work-Order subdirectory.
+2. **The prompt names the path actually used.** The absolute worktree path
+   in a dispatch prompt must be the path that dispatch reads and writes.
+   Never name a remote path and hand over a mounted one, or the stated
+   boundary is not the enforced boundary.
+3. **Verify write visibility before trusting any result** produced on a
+   different host from where edits are written. Write a sentinel file
+   through the edit path, read it back through the execution path, and
+   confirm byte-identical content; repeat in reverse. Record the check.
+4. **Reconcile before committing.** Compute `git status --porcelain` and
+   `git diff --stat` **on the execution host** and confirm they match what
+   the edit path shows. A mismatch is a stop condition, not something to
+   resolve by re-copying.
+5. **Record the access mechanism in the evidence.**
+   `docs/evidence/WO-NNNN/tests.md` states where each command ran, where the
+   files were written, and the §7.1(3) check result — the construction path
+   of every number it reports.
+6. **Prefer no mount.** Where a dispatch can run on the host that holds the
+   files, do that instead; a network mount is a fallback, and its use is
+   disclosed, not assumed.
+
 ## 8. Stop conditions — return to the Architect
 
 The Delivery Controller stops and returns the Work Order with a written

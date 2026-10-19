@@ -93,6 +93,16 @@ use that flag here. Instead:
    worktree path, the Work Order path, the PID path, and the Base SHA.
    State the worktree path explicitly and forbid the shared
    `/srv/argus-breakout` path.
+3a. **Access path (DELIVERY-CHAIN §7.1, AMD-0006).** If you or the
+   Implementer reach the files over a network mount rather than on the host
+   that holds them: give each concurrent dispatch an **exclusive** mount
+   point or subdirectory (never one shared path — that is Forge's known
+   sharp edge #1), make the path named in the prompt the path actually
+   written, and verify write visibility with a sentinel file in both
+   directions before any result from that worktree counts as evidence.
+   Record the mechanism and the check in
+   `docs/evidence/WO-NNNN/tests.md`. Prefer running the dispatch on the
+   host that holds the files and using no mount at all.
 4. When the Implementer reports, verify isolation held: its diff is in its
    worktree, `git -C /srv/argus-breakout status` is clean, the worktree's
    history is this project's.
@@ -114,9 +124,10 @@ use that flag here. Instead:
    line you add to that prompt: *would you say this to an Auditor on a
    different Work Order?* If not, it is a hint about the diff — leave it out.
 8. File evidence on the branch, committed by you:
-   `docs/evidence/WO-NNNN/tests.md`, `auditor-prompt.md` (verbatim),
-   `audit.md` (verbatim verdict block), and any operator-check output the
-   Work Order's §6/§7 names. Spot-check at least one Auditor finding
+   `docs/evidence/WO-NNNN/tests.md` (including where every command ran,
+   where the files were written, and the §7.1(3) write-visibility check),
+   `auditor-prompt.md` (verbatim), `audit.md` (verbatim verdict block), and
+   any operator-check output the Work Order's §6/§7 names. Spot-check at least one Auditor finding
    directly against the artefact and record what you checked.
 9. Open the PR to `main` with the body template below. Set Work Order
    Status → `PR Open`, append to `DELIVERY-LOG.md`, push.
