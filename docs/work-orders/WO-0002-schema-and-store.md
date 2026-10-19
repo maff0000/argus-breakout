@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Closed |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.4, §8.5, §8.6 (base only), §8.7 (`init-store`) ; `DESIGN.md` §3.2 |
-| **Applicable Amendments** | AMD-0002, AMD-0011 |
+| **Applicable Amendments** | AMD-0002, AMD-0011, AMD-0012 |
 | **Base SHA** | 75b230dacb555dbe2f3f4347d640262348bf2b4a |
 | **Branch** | `wo/0002-schema-and-store` |
 | **Depends on** | WO-0001 |
@@ -25,7 +25,7 @@ argus/data/__init__.py               create
 argus/data/schema.py                 create  SCHEMA_VERSION = 1; DDL: dict[table_name, str] for every table in DESIGN §3.2,
                                              column names/types exactly as listed; PRIMARY KEY/UNIQUE per the keys named there
                                              (symbols.symbol; membership(symbol,start_date); bars_raw(symbol,date,source);
-                                             adjustments(symbol,date); bars(symbol,date); etf_bars(symbol,date);
+                                             splits(symbol,date,source); dividends(symbol,date,source) [both measures NOT NULL, AMD-0012]; bars(symbol,date); etf_bars(symbol,date);
                                              iv_daily(symbol,date); composites(date,group_id); features(date,symbol);
                                              market_daily(date); sector_daily(date,group_id); events(symbol,date,type);
                                              ranks(date,symbol,playbook); evidence_packs(date); briefs(date,model);
@@ -69,8 +69,9 @@ once. `membership` intervals are **closed on both ends** (AMD-0011):
 ## 5. Required tests
 | Test | Proves | Capable of failing because… |
 |---|---|---|
-| `test_schema.py::test_all_design_tables_present` | every table in DESIGN §3.2 exists after `init_schema()` | compares against a hard-coded list of the 18 names |
+| `test_schema.py::test_all_design_tables_present` | every table in DESIGN §3.2 exists after `init_schema()` | compares against a hard-coded list of the 19 names |
 | `test_schema.py::test_init_idempotent` | second `init_schema()` is a no-op; `schema_version` has one row | row count assertion |
+| `test_schema.py::test_actions_tables_keyed_by_source` | a split row and a dividend row for the same `(symbol, date)` coexist, and two sources' rows for the same `(symbol, date)` both persist (AMD-0012) | row counts after four upserts |
 | `test_store.py::test_upsert_is_idempotent` | writing the same `symbols` rows twice yields one row each | count assertion |
 | `test_store.py::test_bars_raw_roundtrip_and_dedupe` | sample parquet written twice reads back once per (symbol,date,source) | count + value equality |
 | `test_store.py::test_read_is_parameterised` | `read("select * from symbols where symbol = ?", ["AAA"])` works and `read("… = 'AAA'")` with embedded quote in data does not break | functional |
@@ -81,7 +82,7 @@ once. `membership` intervals are **closed on both ends** (AMD-0011):
 | `test_rate_limiter.py::test_blocks_after_quota` | 5 calls/min limiter: 6th call sleeps (monkeypatched `time.sleep`) | asserts sleep called with > 0 |
 
 ## 6. Acceptance criteria
-- **AC1** — `argus init-store` creates `store/argus.duckdb` and all 18 tables/views (test_all_design_tables_present; operator check listing `SHOW TABLES`).
+- **AC1** — `argus init-store` creates `store/argus.duckdb` and all 19 tables/views (18 + the `splits`/`dividends` split replacing `adjustments`, AMD-0012) (test_all_design_tables_present; operator check listing `SHOW TABLES`).
 - **AC2** — Re-running `argus init-store` changes nothing (test_init_idempotent).
 - **AC3** — Parquet partitions appear under `store/parquet/bars_raw/year=YYYY/` after a write (test_bars_raw_roundtrip_and_dedupe).
 - **AC4** — No SQL string formatting with external input anywhere in `argus/data/` (Auditor grep for f-strings/`%`/`.format` adjacent to `execute`).

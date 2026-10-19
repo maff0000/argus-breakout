@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.7 (`adjust materialise`) ; `DESIGN.md` §3.2 (`bars`, `etf_bars`), §3.3 (adjustment rule) |
-| **Applicable Amendments** | AMD-0002 |
+| **Applicable Amendments** | AMD-0002, AMD-0012 |
 | **Base SHA** | main at Closure of WO-0004 and WO-0005 |
 | **Branch** | `wo/0007-adjust-and-materialise` |
 | **Depends on** | WO-0004, WO-0005 |
@@ -32,9 +32,9 @@ argus/data/adjust.py                 create  select_source(raw: pl.DataFrame) ->
                                              dividend_adjusted_close(bars: pl.DataFrame, dividends: pl.DataFrame) -> pl.Series
                                                (adj_close = close × Π_{ex-dates > date} (1 − dividend/close[ex-date − 1 trading day]))
                                              materialise(store, symbols: list[str] | None) -> MaterialiseReport(n_symbols, n_rows, n_readjusted, warnings)
-                                               (reads bars_raw + adjustments, builds bars/etf_bars per symbol, writes via store.write_bars /
+                                               (reads bars_raw + `splits` + `dividends`, builds bars/etf_bars per symbol, writes via store.write_bars /
                                                 write_etf_bars; adj_version = previous + 1 only when apply_splits changed rows; records ingest_log(source='materialise'))
-argus/data/store.py                  modify  add write_etf_bars(df) / read_etf_bars(...) mirroring bars; add read_adjustments(symbols)
+argus/data/store.py                  modify  add write_etf_bars(df) / read_etf_bars(...) mirroring bars; add read_splits(...) and read_dividends(...) (AMD-0012)
 argus/commands/adjust_cmds.py        create  `adjust materialise [--symbols S1,S2]` (registers onto argus.commands.adjust.app)
 argus/cli.py                         modify  add exactly one import line for argus.commands.adjust_cmds in the append-only block (AMD-0002)
 tests/fixtures/adjust/raw_two_sources.parquet   create  one symbol with Polygon and yfinance overlap (identical closes within 0.01) and a disagreeing day
@@ -48,8 +48,12 @@ No provider changes, no new providers, no IBKR, no features, no schema
 changes beyond none (tables already exist), no `docs/`.
 
 ## 4. Design constraints
-DESIGN §3.3 adjustment rule is binding. Precision: compare sources at 4
-decimal places; when Polygon and yfinance disagree by > 0.5% on close for
+DESIGN §3.3 adjustment rule is binding. Corporate actions come from `splits` and `dividends`, keyed
+`(symbol, date, source)` (AMD-0012): resolve duplicates with the same
+precedence as bars — Polygon over yfinance — and warn on any
+`(symbol, date)` where sources disagree on a ratio by more than 0.1% or on a
+dividend by more than one cent. Precision: compare sources at 4 decimal
+places; when Polygon and yfinance disagree by > 0.5% on close for
 the same day, keep Polygon and append a warning `(symbol, date, pct_diff)`
 to `MaterialiseReport.warnings` and to `ingest_log.detail`. Volume is
 never averaged. `adj_close` uses the prior trading day's close in the
@@ -65,6 +69,7 @@ Materialisation writes per-symbol partitions atomically.
 | `test_adjust.py::test_split_not_double_applied` | running materialise twice does not re-apply; adj_version increments once | version + values |
 | `test_adjust.py::test_dividend_adj_close_hand_values` | adj_close equals the hand-computed fixture values to 1e-6 | numeric |
 | `test_adjust.py::test_missing_prior_close_skips_dividend_with_warning` | — | warning + unchanged value |
+| `test_adjust.py::test_source_precedence_on_actions` | Polygon and yfinance rows for the same split: Polygon's ratio is used, and a disagreement beyond tolerance is warned (AMD-0012) | value + warning presence |
 | `test_adjust.py::test_etf_routed_to_etf_bars` | symbols with gics_sector='ETF' land in etf_bars, not bars | counts |
 
 ## 6. Acceptance criteria

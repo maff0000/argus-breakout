@@ -13,3 +13,4 @@ Approved changes to PIDs, one file per amendment (`AMD-NNNN-<slug>.md`), per `do
 - [AMD-0009](AMD-0009-commit-identity-and-rebase-discipline.md) — Commit identity on a public repository; no scripted rebase through a conflict (Applied)
 - [AMD-0010](AMD-0010-delegated-acceptance-mandate.md) — Delegated Acceptance Mandate; standing rulings for unguided delivery (Applied)
 - [AMD-0011](AMD-0011-membership-interval-and-consequential-tests.md) — `membership.end_date` is inclusive; consequential test updates; WO-0002 delta (Applied)
+- [AMD-0012](AMD-0012-split-adjustments-table.md) — Split `adjustments` into `splits` and `dividends`; ratify the bootstrap exit threshold (Applied)
