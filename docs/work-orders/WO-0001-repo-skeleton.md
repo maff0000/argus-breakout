@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.1, §8.2, §8.3, §8.7 (skeleton only), §9 |
-| **Applicable Amendments** | AMD-0002, AMD-0003, AMD-0004 |
+| **Applicable Amendments** | AMD-0002, AMD-0003, AMD-0004, AMD-0007 |
 | **Base SHA** | `07f2e7067d6c4ea9c17618a8cb53c0a46ca236b3` (rebased from `aec1125…` by Architect determination, §11) |
 | **Branch** | `wo/0001-repo-skeleton` |
 | **Depends on** | none |
@@ -23,6 +23,8 @@ the version (ADR-0007, AMD-0003). No data code yet.
 ## 2. Scope (exhaustive)
 ```
 pyproject.toml                       create  PEP 621; name=argus; version=0.1.0; requires-python>=3.12;
+                                             [build-system] requires=["hatchling"], build-backend="hatchling.build";
+                                             [tool.hatch.build.targets.wheel] packages=["argus"]   (AMD-0007);
                                              deps/extras exactly per PID §8.1; [project.scripts] argus="argus.cli:app";
                                              [tool.ruff] per PID §8.1; [tool.pytest.ini_options] markers=["live: needs credentials/network"],
                                              addopts="-m 'not live'"
@@ -57,7 +59,9 @@ systemd units, no README changes, no changes under `docs/` (the Delivery
 Controller adds evidence), no `.env`.
 
 ## 4. Design constraints
-PID §8.1–8.3 and §8.9, **including the ADR-0008 portability constraints**
+The build backend is `hatchling` and is the only build-time dependency
+permitted beyond PID §8.1's list (AMD-0007). PID §8.1–8.3 and §8.9,
+**including the ADR-0008 portability constraints**
 (no absolute paths; writes only under the configured store/out dirs; logs to
 stdout; nothing importing or shelling out to `uv`/`systemd`/`apt`).
 Secrets are `pydantic.SecretStr`; `Settings.__repr__`

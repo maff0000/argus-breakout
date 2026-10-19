@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `PID.md` (PID-ARGUS-0000) §9 Public Repository Security |
-| **Applicable Amendments** | AMD-0005 |
+| **Applicable Amendments** | AMD-0005, AMD-0006, AMD-0007 |
 | **Base SHA** | main at approval of this Work Order (the commit introducing this file) |
 | **Branch** | `wo/0010-secret-drop-hardening` |
 | **Depends on** | none |
@@ -28,7 +28,12 @@ repository root, protected only by nobody having run `git add -A`.
                                /*.txt            # root-level .txt: the shape of a dropped key file
                              with a comment stating that a real documentation .txt must be added with
                              `git add -f` and a reviewer's attention, and that `.env.example` stays tracked
-                             (it is already negated in the secrets block)
+                             (it is already negated in the secrets block);
+                             then, AFTER the credential patterns, re-include governance documents so no future
+                             document can be silently ignored (AMD-0007):
+                               !/docs/**
+                               !/*.md
+                             The negations must not re-include .env; verify every case with `git check-ignore -v`
 .gitleaks.toml       modify  add a scoped `[[rules]]` entry `argus-bare-key-file` that flags any staged file whose
                              path matches `(?i)(polygon|fmp|ibkr|llm|api)[-_. ]?(key|token|secret)?\.(txt|key|json)$`
                              regardless of content, so an empty-looking or oddly formatted key file is still blocked;
@@ -71,6 +76,7 @@ the Delivery Controller used.
 - **AC5** — With a dummy `polygon.txt` force-staged (`git add -f polygon.txt`), `gitleaks protect --staged --redact` exits non-zero and names the `argus-bare-key-file` rule (operator check; unstage and delete the dummy afterwards). This is the non-vacuity check for AC4.
 - **AC6** — README documents the `/tmp`-only drop procedure (Auditor reads it).
 - **AC7** — Tests in §5 pass (`uv run python -m pytest -q tests/test_repo_hygiene.py`, or `python tests/test_repo_hygiene.py` if `uv` has not been set up on this branch).
+- **AC8** — Governance documents are never ignored, in either direction (AMD-0007): `git check-ignore -q docs/amendments/AMD-0099-secret-test.md` **fails**, `git check-ignore -q docs/work-orders/WO-0099-token-test.md` **fails**, `git check-ignore -q .env` **succeeds**, `git check-ignore -q polygon.txt` **succeeds**. Operator check: all four commands and exit statuses filed (`check-ignore` does not require the paths to exist).
 
 ## 7. Evidence the Delivery Controller must file
 `tests.md`, `auditor-prompt.md`, `audit.md`, `acceptance.md`,
@@ -82,9 +88,17 @@ Order the `.gitignore` additions after the existing secrets block so the
 `!.env.example` negation keeps working; verify with `git check-ignore -v`.
 The `/*.txt` rule is deliberately broad for this repository, which has no
 root-level `.txt` files; it is the pattern that would have caught the real
-near-miss. Keep the gitleaks rule narrow enough not to fire on
-`requirements.txt`-style names (the regex above requires a
-provider/credential word).
+near-miss. Keep the gitleaks rule narrow enough not to fire on `requirements.txt`-style
+names (the regex above requires a provider/credential word).
+
+`gitleaks` scans diff **content**, so the path-only rule cannot fire on a
+zero-byte key file (AMD-0007). That is accepted and bounds the rule's
+claim: **`.gitignore` is the load-bearing control** — it stops `git add -A`
+staging the file at all — and the gitleaks rule is defence in depth for the
+force-added case, where a real key has content. AC5 therefore uses a fake
+key **with content** and remains the non-vacuity check for AC4. Do not
+weaken AC5 to chase the empty-file case, and do not claim the rule covers
+it.
 
 ## 9. Approval
 ```

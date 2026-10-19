@@ -8,3 +8,4 @@ Approved changes to PIDs, one file per amendment (`AMD-NNNN-<slug>.md`), per `do
 - [AMD-0004](AMD-0004-container-readiness.md) — Container readiness: ARGUS_CONFIG_DIR, portability constraints, PID-ARGUS-0006 (Applied)
 - [AMD-0005](AMD-0005-commit-channels-and-secret-drop.md) — Commit channels to `main`; secret-drop hardening as WO-0010 (Applied)
 - [AMD-0006](AMD-0006-worktree-access-provenance.md) — Worktree access path and evidence provenance across hosts (Approved; mid-flight obligations on WO-0001/WO-0010)
+- [AMD-0007](AMD-0007-build-backend-and-gitignore-scope.md) — Build backend named (hatchling); `.gitignore` must not swallow governance docs (Applied)
