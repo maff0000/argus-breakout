@@ -24,3 +24,4 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-19T22:50Z  WO-0010  Accepted  Architect acceptance comment + docs/evidence/WO-0010/acceptance.md (f44e89b) at audited 7a0cf85556be311f050de0aa36449ee06e60c2d1
 2026-10-19T22:50Z  WO-0010  Merged  PR #2 merge commit (no squash); CI green
 2026-10-19T22:50Z  WO-0010  Closed  
+2026-10-19T22:52Z  WO-0002  In Progress  base 75b230dacb555dbe2f3f4347d640262348bf2b4a (main at Closure of WO-0001 and WO-0010; in-scope diff from 02187a7 empty); branch wo/0002-schema-and-store
