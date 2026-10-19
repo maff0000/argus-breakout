@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.6, §8.7 (`ingest bootstrap`) ; `DESIGN.md` §3.1, §3.3 ; ADR-0003 |
-| **Applicable Amendments** | none |
+| **Applicable Amendments** | AMD-0002 |
 | **Base SHA** | main at Closure of WO-0002 |
 | **Branch** | `wo/0005-bootstrap-history` |
 | **Depends on** | WO-0002 |
@@ -28,11 +28,12 @@ argus/data/providers/bootstrap.py    create  class YFinanceProvider(pause_s: flo
                                                actions(symbols, start, end) -> pl.DataFrame[symbol, date, split_ratio|None, cash_dividend|None]
                                                source="yfinance"; basis="split"
                                              yfinance is imported lazily inside methods; absence raises ProviderError("install extras: argus[bootstrap]")
-argus/data/ingest.py                 modify  bootstrap_history(store, provider, start, end, symbols: list[str] | None) -> BootstrapResult(
+argus/data/ingest_bootstrap.py       create  bootstrap_history(store, provider, start, end, symbols: list[str] | None) -> BootstrapResult(
                                                n_symbols, n_rows, failed: list[str], skipped: list[str])
                                                (skips symbols already having ≥ 95% of expected rows in bars_raw[source='yfinance'] for the range;
                                                 writes per chunk; records ingest_log(source='yfinance') per chunk)
-argus/cli.py                         modify  `ingest bootstrap --start D [--end D] [--symbols S1,S2]`
+argus/commands/ingest_bootstrap.py   create  `ingest bootstrap --start D [--end D] [--symbols S1,S2]` (registers onto argus.commands.ingest.app)
+argus/cli.py                         modify  add exactly one import line for argus.commands.ingest_bootstrap in the append-only block (AMD-0002)
 tests/fixtures/bootstrap/yf_download_sample.parquet   create  3 symbols × 60 days, yfinance-shaped multiindex flattened as the provider receives it
 tests/fixtures/bootstrap/yf_actions_sample.parquet    create  includes one split and three dividends
 tests/test_bootstrap_provider.py     create  see §5 (yfinance mocked at the module boundary — no network)

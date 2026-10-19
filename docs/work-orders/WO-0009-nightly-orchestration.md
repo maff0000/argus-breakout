@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §3, §8.7 (`nightly`), §13 ; `DESIGN.md` §10 |
-| **Applicable Amendments** | none |
+| **Applicable Amendments** | AMD-0002 |
 | **Base SHA** | main at Closure of WO-0003, WO-0006, WO-0007, WO-0008 |
 | **Branch** | `wo/0009-nightly-orchestration` |
 | **Depends on** | WO-0003, WO-0006, WO-0007, WO-0008 |
@@ -23,7 +23,7 @@ the runbook and the phase-level operator acceptance evidence.
 ```
 argus/pipeline.py                    create  STEPS: ordered list of (name, callable, required: bool):
                                                universe_refresh (weekly: only if weekday==0 or symbols empty; required=False)
-                                               ingest_polygon_day (required=True)
+                                               ingest_polygon_day from argus.data.ingest_polygon (required=True)
                                                ingest_polygon_actions since D-7 (required=True)
                                                events_refresh days=45 (required=False)
                                                materialise (required=True)
@@ -33,7 +33,8 @@ argus/pipeline.py                    create  STEPS: ordered list of (name, calla
                                                (a failed required step stops the run and marks ok=False; optional step failures are recorded and the run continues;
                                                 every StepResult is written to ingest_log(source=f'nightly:{name}'); the report is written as JSON to
                                                 ARGUS_OUT_DIR/nightly/<date>.json)
-argus/cli.py                         modify  `nightly --date D [--skip-ibkr]`; exit 0 iff report.ok
+argus/commands/nightly_cmds.py       create  `nightly --date D [--skip-ibkr]`; exit 0 iff report.ok (registers onto the root app)
+argus/cli.py                         modify  add exactly one import line for argus.commands.nightly_cmds in the append-only block (AMD-0002)
 ops/systemd/argus-nightly.service    create  Type=oneshot; User=argus; Group=argus; WorkingDirectory=/srv/argus-breakout;
                                              EnvironmentFile=/srv/argus-breakout/.env; ExecStart=/srv/argus-breakout/ops/nightly.sh;
                                              hardening: NoNewPrivileges=yes, ProtectSystem=strict, ProtectHome=yes, PrivateTmp=yes,

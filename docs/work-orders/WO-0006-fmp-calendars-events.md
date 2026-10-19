@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.7 (`events refresh`) ; `DESIGN.md` §3.1, §3.2 (`events`) ; ADR-0003 |
-| **Applicable Amendments** | none |
+| **Applicable Amendments** | AMD-0002 |
 | **Base SHA** | main at Closure of WO-0003 |
 | **Branch** | `wo/0006-fmp-calendars-events` |
 | **Depends on** | WO-0003 |
@@ -34,7 +34,8 @@ argus/events/earnings.py             create  refresh_events(store, fmp, today: d
                                              next_earnings(store, symbol, on: date) -> date | None
                                              days_to_earnings(store, symbols: list[str], on: date) -> pl.DataFrame[symbol, days_to_earnings, days_since_earnings]
                                                (trading-day counts; None when unknown)
-argus/cli.py                         modify  `events refresh --days N` → prints EventsReport
+argus/commands/events_cmds.py        create  `events refresh --days N` → prints EventsReport (registers onto argus.commands.events.app)
+argus/cli.py                         modify  add exactly one import line for argus.commands.events_cmds in the append-only block (AMD-0002)
 tests/fixtures/fmp/earnings_calendar.json      create  scrubbed; includes bmo/amc/null times and non-member symbols
 tests/fixtures/fmp/dividends_calendar.json     create
 tests/test_events.py                 create  see §5 (respx)

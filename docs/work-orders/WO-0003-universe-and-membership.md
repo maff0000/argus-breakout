@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.7 (`universe refresh`), §8.8 ; `DESIGN.md` §3.1, §3.3 (GICS rule), §4 ; ADR-0003, ADR-0005 |
-| **Applicable Amendments** | none |
+| **Applicable Amendments** | AMD-0002 |
 | **Base SHA** | main at Closure of WO-0002 |
 | **Branch** | `wo/0003-universe-and-membership` |
 | **Depends on** | WO-0002 |
@@ -41,7 +41,9 @@ argus/data/universe.py               create  fetch_wikipedia_constituents(http) 
                                                n_missing_group, membership_rows, sources_used)
 config/universe.yaml                 create  per PID §8.8 (benchmarks, sector_etfs, ratio_pairs, overlay_watchlist: [])
 config/gics.yaml                     create  per PID §8.8: 11 sectors, 25 industry groups→sector, 163 sub-industries→group
-argus/cli.py                         modify  `universe refresh [--date]` → universe.refresh(...); prints the UniverseReport; exit 1 if n_missing_group>0
+argus/commands/universe_cmds.py      create  `universe refresh [--date]` → universe.refresh(...); prints the UniverseReport; exit 1 if n_missing_group>0
+                                             (registers onto argus.commands.universe.app)
+argus/cli.py                         modify  add exactly one import line for argus.commands.universe_cmds in the append-only block (AMD-0002)
 tests/fixtures/universe/wikipedia_sp500.html      create  scrubbed static copy (≥490 rows)
 tests/fixtures/universe/hanshof_sample.csv        create  10 dates spanning 2015–2026 with realistic add/remove churn
 tests/fixtures/fmp/historical_sp500.json          create  ≥ 20 change records, scrubbed

@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.7 (`adjust materialise`) ; `DESIGN.md` §3.2 (`bars`, `etf_bars`), §3.3 (adjustment rule) |
-| **Applicable Amendments** | none |
+| **Applicable Amendments** | AMD-0002 |
 | **Base SHA** | main at Closure of WO-0004 and WO-0005 |
 | **Branch** | `wo/0007-adjust-and-materialise` |
 | **Depends on** | WO-0004, WO-0005 |
@@ -35,7 +35,8 @@ argus/data/adjust.py                 create  select_source(raw: pl.DataFrame) ->
                                                (reads bars_raw + adjustments, builds bars/etf_bars per symbol, writes via store.write_bars /
                                                 write_etf_bars; adj_version = previous + 1 only when apply_splits changed rows; records ingest_log(source='materialise'))
 argus/data/store.py                  modify  add write_etf_bars(df) / read_etf_bars(...) mirroring bars; add read_adjustments(symbols)
-argus/cli.py                         modify  `adjust materialise [--symbols S1,S2]`
+argus/commands/adjust_cmds.py        create  `adjust materialise [--symbols S1,S2]` (registers onto argus.commands.adjust.app)
+argus/cli.py                         modify  add exactly one import line for argus.commands.adjust_cmds in the append-only block (AMD-0002)
 tests/fixtures/adjust/raw_two_sources.parquet   create  one symbol with Polygon and yfinance overlap (identical closes within 0.01) and a disagreeing day
 tests/fixtures/adjust/split_case.parquet        create  pre-split history + a split record dated after the last yfinance bar
 tests/fixtures/adjust/dividend_case.parquet     create  known dividends with hand-computed expected adj_close values (documented in the test)

@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.1, §8.2, §8.3, §8.7 (skeleton only), §9 |
-| **Applicable Amendments** | none |
+| **Applicable Amendments** | AMD-0002 |
 | **Base SHA** | `aec11259c066d7adb6db867c80bdb0c8b5c62a47` |
 | **Branch** | `wo/0001-repo-skeleton` |
 | **Depends on** | none |
@@ -29,9 +29,16 @@ requirements.lock                    create  pinned output of `pip freeze` for t
 argus/__init__.py                    create  __version__ = "0.1.0"
 argus/settings.py                    create  Settings, ConfigError, get_settings() exactly per PID §8.2
 argus/logging.py                     create  configure_logging(level) per PID §8.3, incl. redaction processor
-argus/cli.py                         create  typer app; `--version` callback; sub-apps registered as empty groups:
-                                             universe, ingest, events, adjust, ibkr; command `init-store` stubbed to
-                                             raise typer.Exit(2) with message "store not implemented (WO-0002)"
+argus/cli.py                         create  typer root app; `--version` callback; registers the five sub-apps from argus/commands/*;
+                                             command `init-store` stubbed to raise typer.Exit(2) with message "store not implemented (WO-0002)";
+                                             contains the marked block `# --- command module imports (append only; one line per Work Order) ---`
+                                             (empty at this Work Order) immediately after the sub-app registrations
+argus/commands/__init__.py           create
+argus/commands/universe.py           create  `app = typer.Typer(help="Universe and membership")`  (no commands yet)
+argus/commands/ingest.py             create  `app = typer.Typer(help="Data ingestion")`
+argus/commands/events.py             create  `app = typer.Typer(help="Earnings and dividend events")`
+argus/commands/adjust.py             create  `app = typer.Typer(help="Adjustment and materialisation")`
+argus/commands/ibkr.py               create  `app = typer.Typer(help="IBKR paper gateway (read-only)")` 
 argus/py.typed                       create  empty marker
 tests/__init__.py                    create
 tests/conftest.py                    create  fixture `clean_env` (monkeypatch removes every ARGUS_/POLYGON_/FMP_/IB_/LLM_ var,
@@ -43,7 +50,7 @@ tests/test_cli.py                    create  see §5
 ```
 
 ## 3. Exclusions
-No `argus/data/`, no providers, no DuckDB code, no YAML config files, no
+No `argus/data/`, no providers, no DuckDB code, no commands beyond the empty sub-app objects and the `init-store` stub, no YAML config files, no
 systemd units, no README changes, no changes under `docs/` (the Delivery
 Controller adds evidence), no `.env`.
 
@@ -76,9 +83,7 @@ only. No network access anywhere in this Work Order.
 `acceptance.md`, `operator-checks.md` (AC1, AC2, AC5, AC6 outputs).
 
 ## 8. Implementer notes
-Read PID §8.1–8.3 first; the signatures there are binding. Keep `cli.py`
-free of business logic; sub-apps are empty `typer.Typer()` groups that
-later Work Orders populate. Do not add dependencies beyond PID §8.1.
+Read PID §8.1–8.3 first; the signatures there are binding. Keep `cli.py` free of business logic; sub-apps are empty `typer.Typer()` objects in `argus/commands/` that later Work Orders register commands onto from their own modules (PID §8.7 command-module rule, AMD-0002). Do not add dependencies beyond PID §8.1.
 
 ## 9. Approval
 ```

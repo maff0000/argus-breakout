@@ -164,6 +164,19 @@ argus nightly --date D [--skip-ibkr]                          # WO-0009
 Every command exits non-zero on failure and logs `status=failed` to
 `ingest_log` where a date applies.
 
+**Command-module rule (AMD-0002).** `argus/cli.py` defines the root app and
+the five sub-app objects in `argus/commands/{universe,ingest,events,adjust,ibkr}.py`
+(each `app = typer.Typer(help=...)`, created empty by WO-0001). Every later
+Work Order puts its commands in **its own module** under `argus/commands/`
+(named in its scope) that registers onto the relevant sub-app object, and
+adds **exactly one import line** inside the marked append-only block in
+`argus/cli.py`:
+```python
+# --- command module imports (append only; one line per Work Order) ---
+```
+No Work Order edits another Work Order's command module. This keeps the
+P0-C and P0-D groups free of file-level conflicts.
+
 ### 8.8 Configuration files
 - `config/universe.yaml`: `benchmarks: [SPY, RSP]`, `sector_etfs: {...}`,
   `ratio_pairs: [[SMH,SPY], ...]`, `overlay_watchlist: []`.

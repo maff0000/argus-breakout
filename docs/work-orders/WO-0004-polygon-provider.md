@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.6, §8.7 (`ingest polygon`, `ingest polygon-actions`) ; `DESIGN.md` §3.1, §3.3 ; ADR-0003 |
-| **Applicable Amendments** | none |
+| **Applicable Amendments** | AMD-0002 |
 | **Base SHA** | main at Closure of WO-0002 |
 | **Branch** | `wo/0004-polygon-provider` |
 | **Depends on** | WO-0002 |
@@ -32,12 +32,13 @@ argus/data/validate.py               create  validate_day(bars: pl.DataFrame, me
                                                groups: pl.DataFrame) -> ValidationResult(ok: bool, reasons: list[str], coverage: float, n_zero_vol: int, n_jump: int)
                                                rules exactly DESIGN §3.3: coverage ≥ 0.95; no |close/prior_close − 1| > 0.25 without a split; zero-volume ≤ 2%;
                                                every member has an industry group
-argus/data/ingest.py                 create  ingest_polygon_day(store, client, d) -> IngestResult(rows, status{'ok','rejected','failed'}, detail)
+argus/data/ingest_polygon.py         create  ingest_polygon_day(store, client, d) -> IngestResult(rows, status{'ok','rejected','failed'}, detail)
                                                (filters grouped_daily to symbols ∪ ETFs in `symbols`; runs validate_day; writes bars_raw only when ok;
                                                always writes ingest_log)
                                              backfill_polygon(store, client, start, end) -> list[IngestResult]  (trading days only; skips days already present; honours rate limit)
                                              ingest_polygon_actions(store, client, since) -> int  (upsert adjustments)
-argus/cli.py                         modify  `ingest polygon --date D | --backfill START END`, `ingest polygon-actions --since D`
+argus/commands/ingest_polygon.py     create  `ingest polygon --date D | --backfill START END`, `ingest polygon-actions --since D` (registers onto argus.commands.ingest.app)
+argus/cli.py                         modify  add exactly one import line for argus.commands.ingest_polygon in the append-only block (AMD-0002)
 tests/fixtures/polygon/grouped_daily_2026-10-16.json   create  scrubbed sample: ≥ 600 tickers incl. members, ETFs, junk tickers (warrants, units)
 tests/fixtures/polygon/splits_page1.json, splits_page2.json  create  pagination sample with next_url
 tests/fixtures/polygon/dividends.json                   create

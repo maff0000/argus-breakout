@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.6, §8.7 (`ibkr reconcile`, `ibkr iv`) ; `DESIGN.md` §3.1, §3.3 (reconciliation), §3.2 (`iv_daily`, `reconcile_log`) ; ADR-0006 |
-| **Applicable Amendments** | none |
+| **Applicable Amendments** | AMD-0002 |
 | **Base SHA** | main at Closure of WO-0007 |
 | **Branch** | `wo/0008-ibkr-reconcile-and-iv` |
 | **Depends on** | WO-0007 |
@@ -39,8 +39,9 @@ argus/data/reconcile.py              create  choose_sample(members: list[str], o
                                                 comparison to reconcile_log with breach flag; never modifies bars)
                                              fetch_iv(store, client, on: date, symbols: list[str]) -> int
                                                (iv30 from OPTION_IMPLIED_VOLATILITY, hv30 from HISTORICAL_VOLATILITY, last 5 days; upsert iv_daily, source='ibkr')
-argus/cli.py                         modify  `ibkr reconcile --date D [--sample 20]`, `ibkr iv --date D`  (both require settings.ib_port; exit 2 with
-                                             ConfigError message when missing)
+argus/commands/ibkr_cmds.py          create  `ibkr reconcile --date D [--sample 20]`, `ibkr iv --date D` (registers onto argus.commands.ibkr.app;
+                                             both require settings.ib_port; exit 2 with ConfigError message when missing)
+argus/cli.py                         modify  add exactly one import line for argus.commands.ibkr_cmds in the append-only block (AMD-0002)
 tests/fakes/fake_ib.py               create  FakeIBClient(IBClient) seeded from parquet fixtures; records calls
 tests/fixtures/ibkr/trades_sample.parquet       create  5 symbols × 10 days, two deliberate breaches (one close, one volume)
 tests/fixtures/ibkr/iv_sample.parquet           create  3 ETFs × 5 days
