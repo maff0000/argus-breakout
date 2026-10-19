@@ -37,3 +37,4 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-19T23:19Z  WO-0002  Accepted  AMD-0011 3 pre-committed acceptance; docs/evidence/WO-0002/acceptance.md at audited 19ad58f96e100f90f57ebfc3b2fdb87e46516c39
 2026-10-19T23:19Z  WO-0002  Merged  PR #3 merge commit (no squash); CI green
 2026-10-19T23:19Z  WO-0002  Closed  
+2026-10-19T23:20Z  WO-0004  In Progress  base bdce04d5b20fa6c31880ed0b13655972a3540b38 (main at Closure of WO-0002; P0-C concurrent group); branch wo/0004-polygon-provider
