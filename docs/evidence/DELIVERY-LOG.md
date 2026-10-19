@@ -28,3 +28,9 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-19T23:00Z  WO-0002  Implemented  head e5682b9d57e09a4575cf25e57564fb94eecf244b (Implementer diff reviewed and committed by DC; mechanicals green on host)
 2026-10-19T23:00Z  WO-0002  Audited GREEN  audited sha e5682b9d57e09a4575cf25e57564fb94eecf244b; first audit; scope_fidelity no (tests/test_cli.py) so AMD-0010 mandate not applied; evidence docs/evidence/WO-0002/
 2026-10-19T23:00Z  WO-0002  PR Open  branch wo/0002-schema-and-store; Route B, awaiting ARCHITECT ACCEPTANCE
+2026-10-19T23:18Z  WO-0002  In Progress  AMD-0011 landed; main (92cb752) merged into branch; delta dispatch test_members_on_boundaries (0958745); first-audit evidence withdrawn; prior audit superseded
+19ad58f96e100f90f57ebfc3b2fdb87e46516c39  WO-0002  Audited GREEN  audited sha 2026-10-19T23:18Z; whole-branch re-audit against AMD-0002/0011, no findings; evidence docs/evidence/WO-0002/
+19ad58f96e100f90f57ebfc3b2fdb87e46516c39  WO-0002  PR Open  PR #3; awaiting CI then acceptance under AMD-0011 §3
+2026-10-19T23:18Z  WO-0002  In Progress  AMD-0011 landed; main (92cb752) merged into branch; delta dispatch test_members_on_boundaries (0958745); first-audit evidence withdrawn; prior audit superseded
+  WO-0002  Audited GREEN  audited sha ; whole-branch re-audit against AMD-0002/0011, no findings; evidence docs/evidence/WO-0002/
+  WO-0002  PR Open  PR #3; awaiting CI then acceptance under AMD-0011 §3
