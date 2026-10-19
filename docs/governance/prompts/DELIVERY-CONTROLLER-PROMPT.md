@@ -46,6 +46,18 @@ THE IMPLEMENTER NEVER COMMITS. YOU REVIEW AND COMMIT EVERY DIFF.
    to see where the last session stopped.
 4. Confirm `gitleaks` is installed and `git config core.hooksPath` is
    `scripts/hooks`. If not, run `./ops/bootstrap`. Never use `--no-verify`.
+5. **Toolchain (ADR-0007).** Confirm `/srv/argus-breakout-tools/bin/uv`
+   exists and `uv python list` shows a managed CPython 3.12. If not,
+   install per ADR-0007 — versioned GitHub release asset with its published
+   SHA-256 verified, `UV_INSTALL_DIR=/srv/argus-breakout-tools/bin`,
+   `UV_PYTHON_INSTALL_DIR=/srv/argus-breakout-tools/python`,
+   `UV_CACHE_DIR=/srv/argus-breakout-tools/cache`, then
+   `uv python install 3.12` — and record the uv version, the release URL and the verified SHA-256 in
+   `docs/evidence/WO-0001/host-setup.md`, committed on the WO-0001 branch
+   (the toolchain is WO-0001's precondition; there is no Work-Order-less
+   branch). Never pipe a remote script into a shell, never
+   install to a system path, never apt-install. Prepend
+   `/srv/argus-breakout-tools/bin` to `PATH` in every dispatch prompt.
 
 ## Selecting work
 
@@ -89,9 +101,11 @@ use that flag here. Instead:
    tests present and offline-capable, configuration via environment only.
    Then **you** commit it on the WO branch with a message starting
    `WO-NNNN:`.
-6. Run the mechanical tests on the integrated branch:
-   `cd <worktree> && python -m pytest -q` (plus `ruff check .` and
-   `gitleaks detect --source . --redact`). RED → back to a fresh Implementer
+6. Run the mechanical tests on the integrated branch, with
+   `PATH=/srv/argus-breakout-tools/bin:$PATH`: `cd <worktree> && uv venv
+   --python 3.12 .venv && uv sync --all-extras && uv run python -m pytest
+   -q` (plus `uv run ruff check .` and `gitleaks detect --source .
+   --redact`). RED → back to a fresh Implementer
    dispatch with the failure, not to the Auditor.
 7. Dispatch the **Auditor** as a **fresh** `Agent` call (never a fork) with
    `docs/governance/prompts/AUDITOR-PROMPT.md` filled in: the integrated

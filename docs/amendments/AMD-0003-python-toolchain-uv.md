@@ -39,9 +39,11 @@ gap, correctly returned.
 
 ## 3. Consequences
 No change to application behaviour, tests (other than invocation), or
-acceptance semantics. Step 0 of the kickoff gains the toolchain install,
-performed by the Delivery Controller under ADR-0007 with version and
-checksum recorded in `docs/evidence/HOST-SETUP.md`.
+acceptance semantics. Step 0 of the kickoff gains the toolchain install, performed by the
+Delivery Controller under ADR-0007, with the uv version, release URL and
+verified SHA-256 recorded in `docs/evidence/WO-0001/host-setup.md` on the
+WO-0001 branch (the toolchain is that Work Order's precondition, so no
+Work-Order-less branch is needed).
 
 ## 4. Application
 Applied in the commit introducing this file; changed sections tagged

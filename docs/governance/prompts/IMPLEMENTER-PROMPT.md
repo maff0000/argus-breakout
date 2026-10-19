@@ -25,6 +25,14 @@ WORKTREE:     <absolute path, e.g. /srv/argus-breakout-wt/WO-NNNN>   ← the ONL
 BRANCH:       wo/NNNN-<slug>
 ```
 
+**Environment (ADR-0007, AMD-0003).** Run
+`export PATH=/srv/argus-breakout-tools/bin:$PATH`. In your worktree, once
+`pyproject.toml` exists: `uv venv --python 3.12 .venv && uv sync
+--all-extras`. Run every command through it — `uv run python -m pytest -q`,
+`uv run ruff check .`. Never use the system Python (it is 3.11), never
+`pip install` into the venv (use `uv add` / `uv lock`), and never install
+anything outside your worktree and the pre-existing tools directory.
+
 Read, in this order, before writing anything: the Work Order in full; the
 PID sections it names; any Amendments; `docs/architecture/DESIGN.md` and
 the ADRs the Work Order cites; the existing code in the paths the Work

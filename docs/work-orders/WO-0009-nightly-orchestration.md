@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §3, §8.7 (`nightly`), §13 ; `DESIGN.md` §10 |
-| **Applicable Amendments** | AMD-0002 |
+| **Applicable Amendments** | AMD-0002, AMD-0003 |
 | **Base SHA** | main at Closure of WO-0003, WO-0006, WO-0007, WO-0008 |
 | **Branch** | `wo/0009-nightly-orchestration` |
 | **Depends on** | WO-0003, WO-0006, WO-0007, WO-0008 |
@@ -37,12 +37,14 @@ argus/commands/nightly_cmds.py       create  `nightly --date D [--skip-ibkr]`; e
 argus/cli.py                         modify  add exactly one import line for argus.commands.nightly_cmds in the append-only block (AMD-0002)
 ops/systemd/argus-nightly.service    create  Type=oneshot; User=argus; Group=argus; WorkingDirectory=/srv/argus-breakout;
                                              EnvironmentFile=/srv/argus-breakout/.env; ExecStart=/srv/argus-breakout/ops/nightly.sh;
-                                             hardening: NoNewPrivileges=yes, ProtectSystem=strict, ProtectHome=yes, PrivateTmp=yes,
+                                             hardening: NoNewPrivileges=yes, ProtectSystem=strict (which leaves /srv/argus-breakout-tools readable), ProtectHome=yes, PrivateTmp=yes,
                                              ReadWritePaths=/srv/argus-breakout/store /srv/argus-breakout/out
 ops/systemd/argus-nightly.timer      create  OnCalendar=Mon..Fri 23:30 Europe/London; Persistent=true; Unit=argus-nightly.service
 ops/nightly.sh                       create  POSIX sh; computes the target trading date = last weekday ≤ now in America/New_York
                                              (honours ARGUS_NOW=YYYY-MM-DDTHH:MM for tests); exec /srv/argus-breakout/.venv/bin/argus nightly --date <that date>
-docs/runbook/OPERATIONS.md           create  install steps (service user, venv, .env permissions 0600, bootstrap, systemd enable), daily checks,
+docs/runbook/OPERATIONS.md           create  install steps (toolchain per ADR-0007: project-local uv + managed CPython 3.12 under
+                                             /srv/argus-breakout-tools, mode 0755; service user; `uv venv --python 3.12 .venv && uv sync --all-extras`;
+                                             .env permissions 0600; bootstrap; systemd enable), daily checks,
                                              how to re-run a day, how to read ingest_log/reconcile_log, backup of store/ (rsync to second disk), recovery
 tests/test_pipeline.py               create  see §5 (steps monkeypatched with fakes)
 tests/test_nightly_sh.py             create  see §5 (runs ops/nightly.sh with ARGUS_NOW set and a stub `argus` on PATH that echoes its arguments)

@@ -21,8 +21,9 @@ UV_PYTHON_INSTALL_DIR=/srv/argus-breakout-tools/python # managed CPython 3.12
 UV_CACHE_DIR=/srv/argus-breakout-tools/cache
 ```
 - Install `uv` from a **versioned GitHub release asset** with its published
-  SHA-256 verified; record the version and checksum in evidence. Do not
-  pipe a remote script into a shell.
+  SHA-256 verified; record the version, URL and checksum in
+  `docs/evidence/WO-0001/host-setup.md`. Do not pipe a remote script into a
+  shell.
 - `uv python install 3.12` then, per checkout/worktree:
   `uv venv --python 3.12 .venv && uv sync --all-extras` (reads
   `pyproject.toml` + `uv.lock`). Run everything through the venv:

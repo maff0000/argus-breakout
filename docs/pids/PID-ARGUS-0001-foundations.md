@@ -208,8 +208,9 @@ git. No scheduler state outside systemd timers.
 Per `docs/governance/DELIVERY-CHAIN.md` §7.
 
 ## 12. Quality and Testing
-- `python -m pytest -q` passes offline with no `.env`; `ruff check .`
-  clean; `gitleaks detect` clean — on every Work Order branch.
+- `uv run python -m pytest -q` passes offline with no `.env`; `uv run ruff
+  check .` clean; `gitleaks detect` clean — on every Work Order branch
+  (AMD-0003).
 - HTTP providers are tested with `respx` against fixtures in
   `tests/fixtures/<provider>/*.json` recorded once and scrubbed of keys.
 - IBKR is tested against an in-process fake implementing the small

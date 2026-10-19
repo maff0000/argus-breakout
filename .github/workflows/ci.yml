@@ -16,12 +16,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
-      - name: Install
-        run: |
-          if [ -f pyproject.toml ]; then python -m pip install -e ".[dev]"; else echo "no package yet"; fi
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - name: Sync
+        run: if [ -f pyproject.toml ]; then uv sync --all-extras; else echo "no package yet"; fi
       - name: Lint
-        run: if [ -f pyproject.toml ]; then ruff check .; else echo skip; fi
+        run: if [ -f pyproject.toml ]; then uv run ruff check .; else echo skip; fi
       - name: Test (offline, no .env)
-        run: if [ -f pyproject.toml ]; then python -m pytest -q; else echo skip; fi
+        run: if [ -f pyproject.toml ]; then uv run python -m pytest -q; else echo skip; fi

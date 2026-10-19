@@ -104,7 +104,9 @@ Authoritative detail: `docs/architecture/DESIGN.md` and the ADRs in
 `docs/architecture/adr/`. Summary of the fixed decisions an Implementer
 works within:
 
-- **Language/runtime:** Python 3.12; `polars` for feature computation,
+- **Language/runtime:** Python 3.12, provided by a project-local `uv`-managed
+  CPython under `/srv/argus-breakout-tools/` with no system installs
+  (ADR-0007); `polars` for feature computation,
   `duckdb` + Parquet for storage, `httpx` for HTTP, `pydantic-settings` for
   configuration, `typer` for the CLI, `pytest` + `ruff` for quality.
   (ADR-0002)
@@ -176,11 +178,12 @@ amending commits cited by SHA.
 
 ## 12. Quality and Testing
 
-- `python -m pytest -q` must pass **offline with no `.env` and no network**
-  on every Work Order branch. Live checks are `@pytest.mark.live`, skipped
+- `uv run python -m pytest -q` (AMD-0003; see ADR-0007 for the toolchain)
+  must pass **offline with no `.env` and no network** on every Work Order
+  branch. Live checks are `@pytest.mark.live`, skipped
   by default, run by the Delivery Controller as operator checks with the
   host's `.env` and recorded in evidence.
-- `ruff check .` clean; `gitleaks detect` clean.
+- `uv run ruff check .` clean; `gitleaks detect` clean.
 - Every Work Order names its tests and what each proves; tests relied on as
   proof must be shown capable of failing (Forge Engineer rule 14).
 - Acceptance criteria are observable and numbered; file-based outputs are

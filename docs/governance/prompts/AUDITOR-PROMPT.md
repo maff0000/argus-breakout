@@ -57,8 +57,10 @@ Your verdict is evidence for the Architect; it is not acceptance.
    input exercises the behaviour, and that the check can fail (e.g. perturb
    the implementation or the expected value and observe failure). Record
    `non_vacuity_established: yes | no | n/a (reason)`.
-4. **Offline guarantee.** Run `python -m pytest -q` with no `.env` present
-   and network disabled or unavailable. Any test that needs a secret or the
+4. **Offline guarantee.** With `PATH=/srv/argus-breakout-tools/bin:$PATH`,
+   `uv venv --python 3.12 .venv && uv sync --all-extras`, then run
+   `uv run python -m pytest -q` with no `.env` present and network disabled
+   or unavailable. Any test that needs a secret or the
    network and is not marked `live` is a finding.
 5. **Public-repository hygiene.** `gitleaks detect --source <WORKTREE>
    --redact`; also grep the diff for IPs, ports, account identifiers, URLs
