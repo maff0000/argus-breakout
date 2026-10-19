@@ -1,0 +1,200 @@
+[
+ {
+  "dateAdded": "September 22, 2025",
+  "addedSecurity": "APP",
+  "removedTicker": "MKTX",
+  "removedSecurity": "MKTX",
+  "date": "2025-09-22",
+  "symbol": "APP",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "September 22, 2025",
+  "addedSecurity": "HOOD",
+  "removedTicker": "CZR",
+  "removedSecurity": "CZR",
+  "date": "2025-09-22",
+  "symbol": "HOOD",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "September 22, 2025",
+  "addedSecurity": "EME",
+  "removedTicker": "LKQ",
+  "removedSecurity": "LKQ",
+  "date": "2025-09-22",
+  "symbol": "EME",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "August 28, 2025",
+  "addedSecurity": "IBKR",
+  "removedTicker": "WBA",
+  "removedSecurity": "WBA",
+  "date": "2025-08-28",
+  "symbol": "IBKR",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "August 12, 2025",
+  "addedSecurity": "PSKY",
+  "removedTicker": "",
+  "removedSecurity": "",
+  "date": "2025-08-12",
+  "symbol": "PSKY",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "August 09, 2025",
+  "addedSecurity": "",
+  "removedTicker": "PARA",
+  "removedSecurity": "PARA",
+  "date": "2025-08-09",
+  "symbol": "",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "July 24, 2025",
+  "addedSecurity": "XYZ",
+  "removedTicker": "",
+  "removedSecurity": "",
+  "date": "2025-07-24",
+  "symbol": "XYZ",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "July 22, 2025",
+  "addedSecurity": "",
+  "removedTicker": "HES",
+  "removedSecurity": "HES",
+  "date": "2025-07-22",
+  "symbol": "",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "July 18, 2025",
+  "addedSecurity": "TTD",
+  "removedTicker": "ANSS",
+  "removedSecurity": "ANSS",
+  "date": "2025-07-18",
+  "symbol": "TTD",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "July 11, 2025",
+  "addedSecurity": "DDOG",
+  "removedTicker": "",
+  "removedSecurity": "",
+  "date": "2025-07-11",
+  "symbol": "DDOG",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "July 04, 2025",
+  "addedSecurity": "",
+  "removedTicker": "JNPR",
+  "removedSecurity": "JNPR",
+  "date": "2025-07-04",
+  "symbol": "",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "May 17, 2025",
+  "addedSecurity": "COIN",
+  "removedTicker": "DFS",
+  "removedSecurity": "DFS",
+  "date": "2025-05-17",
+  "symbol": "COIN",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "March 25, 2025",
+  "addedSecurity": "DASH",
+  "removedTicker": "BWA",
+  "removedSecurity": "BWA",
+  "date": "2025-03-25",
+  "symbol": "DASH",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "March 25, 2025",
+  "addedSecurity": "EXE",
+  "removedTicker": "CE",
+  "removedSecurity": "CE",
+  "date": "2025-03-25",
+  "symbol": "EXE",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "March 25, 2025",
+  "addedSecurity": "TKO",
+  "removedTicker": "FMC",
+  "removedSecurity": "FMC",
+  "date": "2025-03-25",
+  "symbol": "TKO",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "March 25, 2025",
+  "addedSecurity": "WSM",
+  "removedTicker": "TFX",
+  "removedSecurity": "TFX",
+  "date": "2025-03-25",
+  "symbol": "WSM",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "December 26, 2024",
+  "addedSecurity": "APO",
+  "removedTicker": "AMTM",
+  "removedSecurity": "AMTM",
+  "date": "2024-12-26",
+  "symbol": "APO",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "December 26, 2024",
+  "addedSecurity": "WDAY",
+  "removedTicker": "QRVO",
+  "removedSecurity": "QRVO",
+  "date": "2024-12-26",
+  "symbol": "WDAY",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "December 24, 2024",
+  "addedSecurity": "LII",
+  "removedTicker": "",
+  "removedSecurity": "",
+  "date": "2024-12-24",
+  "symbol": "LII",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "December 19, 2024",
+  "addedSecurity": "",
+  "removedTicker": "CTLT",
+  "removedSecurity": "CTLT",
+  "date": "2024-12-19",
+  "symbol": "",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "November 26, 2024",
+  "addedSecurity": "TPL",
+  "removedTicker": "",
+  "removedSecurity": "",
+  "date": "2024-11-26",
+  "symbol": "TPL",
+  "reason": "scrubbed"
+ },
+ {
+  "dateAdded": "November 23, 2024",
+  "addedSecurity": "",
+  "removedTicker": "MRO",
+  "removedSecurity": "MRO",
+  "date": "2024-11-23",
+  "symbol": "",
+  "reason": "scrubbed"
+ }
+]

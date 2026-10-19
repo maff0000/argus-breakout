@@ -1,0 +1,26 @@
+# Universe configuration (PID-ARGUS-0001 8.8). Loaded from ARGUS_CONFIG_DIR.
+benchmarks: [SPY, RSP]
+
+# GICS sector -> SPDR sector ETF
+sector_etfs:
+  "Communication Services": XLC
+  "Consumer Discretionary": XLY
+  "Consumer Staples": XLP
+  "Energy": XLE
+  "Financials": XLF
+  "Health Care": XLV
+  "Industrials": XLI
+  "Information Technology": XLK
+  "Materials": XLB
+  "Real Estate": XLRE
+  "Utilities": XLU
+
+# [numerator, denominator] ETF pairs for ratio z-scores
+ratio_pairs:
+  - [SMH, SPY]
+  - [RSP, SPY]
+  - [XLY, XLP]
+  - [XLK, XLU]
+  - [IWM, SPY]
+
+overlay_watchlist: []
