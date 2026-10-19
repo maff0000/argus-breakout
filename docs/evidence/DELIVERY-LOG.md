@@ -7,3 +7,4 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-19T22:29Z  WO-0001  Implemented  head be5a224bf98cb5ffb25e4d462663d72f3c45c6f9 (Implementer diff reviewed and committed by DC; mechanicals green on host)
 2026-10-19T22:29Z  WO-0001  Audited GREEN  audited sha be5a224bf98cb5ffb25e4d462663d72f3c45c6f9; evidence docs/evidence/WO-0001/
 2026-10-19T22:29Z  WO-0001  PR Open  branch wo/0001-repo-skeleton; awaiting ARCHITECT ACCEPTANCE
+2026-10-19T22:30Z  WO-0001  PR Open  PR #1
