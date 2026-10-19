@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Approved |
+| **Status** | In Progress |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.6, §8.7 (`ingest bootstrap`) ; `DESIGN.md` §3.1, §3.3 ; ADR-0003 |
 | **Applicable Amendments** | AMD-0002 |
-| **Base SHA** | main at Closure of WO-0002 |
+| **Base SHA** | bdce04d5b20fa6c31880ed0b13655972a3540b38 |
 | **Branch** | `wo/0005-bootstrap-history` |
 | **Depends on** | WO-0002 |
 | **Parallel group** | P0-C (with WO-0003, WO-0004) |
