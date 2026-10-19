@@ -1,0 +1,13 @@
+{
+ "results": [
+  {
+   "execution_date": "2026-06-01",
+   "id": "fx-MAC",
+   "split_from": 1,
+   "split_to": 3,
+   "ticker": "MAC"
+  }
+ ],
+ "status": "OK",
+ "request_id": "fixture"
+}
