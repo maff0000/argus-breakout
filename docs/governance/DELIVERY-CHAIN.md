@@ -290,6 +290,17 @@ change (AMD-0005).
 5. **Accepted residuals.** `docs/governance/ACCEPTED-RESIDUALS.md` lists
    limitations already considered and accepted. Do not stop for one; do not
    ask for a ruling on one.
+6. **Consequential test update (AMD-0011).** An Implementer may modify an
+   existing test that asserts behaviour this Work Order's §2 **explicitly
+   changes**, without that counting as a scope breach, provided all three
+   hold: the edit is confined to that test's assertions (no new behaviour,
+   no other test touched); coverage is not reduced — the replacement asserts
+   the **new** behaviour at least as strongly as the old asserted the old;
+   and the Implementer names the test and the reason in its report. The
+   Delivery Controller records it in `docs/evidence/WO-NNNN/spec-gaps.md`,
+   and an Auditor's `scope_fidelity: no` raised solely on such an edit is
+   **procedural and non-blocking**. Touching a test whose behaviour the
+   Work Order does **not** change remains a stop.
 
 ## 10. Public repository rules
 

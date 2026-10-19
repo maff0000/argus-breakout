@@ -138,7 +138,7 @@ class Store:
     def read_bars_raw(self, symbols: list[str] | None, start: date, end: date, source: str | None) -> pl.DataFrame
     def write_bars(self, df: pl.DataFrame) -> int       # replaces the affected (symbol) partitions
     def read_bars(self, symbols: list[str] | None, start: date, end: date) -> pl.DataFrame
-    def members_on(self, d: date) -> list[str]          # from membership
+    def members_on(self, d: date) -> list[str]          # from membership; closed interval BOTH ends, end_date NULL = current (AMD-0011)
     def log_ingest(self, date: date, source: str, rows: int, status: str, detail: str = "") -> None
 ```
 Parquet layout: `store/parquet/bars_raw/year=YYYY/*.parquet`,
