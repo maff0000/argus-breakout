@@ -44,6 +44,14 @@ NO INDEPENDENT AUDIT + ARCHITECT ACCEPTANCE → NO MERGE.
 ```
 Your verdict is evidence for the Architect; it is not acceptance.
 
+**Before reporting, read `docs/governance/ACCEPTED-RESIDUALS.md`
+(AMD-0010).** A limitation listed there has already been considered and
+accepted by the Architect: record it as an *observation*, never a finding,
+and never let it block a GREEN. Likewise, a diff touching `docs/` paths
+authored by the Delivery Controller (evidence, delivery log, Work Order
+clerical fields) is **procedural, not a scope breach** — a Work Order's §3
+Exclusions bind the Implementer only.
+
 ## What to check (every audit)
 
 1. **Scope fidelity.** `git diff --stat <BASE SHA> <AUDITED SHA>`. Every

@@ -138,6 +138,15 @@ Status, Base SHA (under §6.3 only), branch name, PR number, evidence paths,
 timestamps. Nothing else. Scope, exclusions, tests and acceptance criteria
 are Architect-only.
 
+A Work Order's §3 Exclusions constrain the **Implementer**. They never
+restrict the Delivery Controller's own clerical and evidence writes, which
+are governed by this section and §7: Status, Base SHA, Branch, PR, evidence
+paths, timestamps, `docs/evidence/WO-NNNN/**` and
+`docs/evidence/DELIVERY-LOG.md`. Where a Work Order's §3 says "no changes
+under `docs/`", read it as "the Implementer makes no changes under
+`docs/`". An Auditor finding that the diff touches DC-authored `docs/`
+paths is **procedural and non-blocking** (AMD-0010).
+
 ## 7. Branching, PRs, acceptance, merge
 
 - `main` is protected and has exactly **two** commit channels (AMD-0005):
@@ -174,6 +183,23 @@ are Architect-only.
   2. `docs/evidence/WO-NNNN/acceptance.md` (template in this directory),
      committed to the PR branch by the Architect, or by the Delivery
      Controller quoting the comment URL if the Architect cannot push.
+- **Delegated Acceptance Mandate (AMD-0010).** For **WO-0002 … WO-0007**
+  the Architect's acceptance is granted **in advance**, conditional on all
+  nine conditions in `docs/amendments/AMD-0010-delegated-acceptance-mandate.md`
+  §2B being true and recorded: GREEN audit with no non-procedural,
+  non-residual findings; non-vacuity established; every acceptance
+  criterion verified with filed command output including operator checks;
+  scope fidelity; offline tests, ruff, gitleaks and CI all clean;
+  commit identity clean; audited SHA is the branch head bar evidence and
+  clerical commits; no Amendment, ambiguity or credential gap; access
+  mechanism recorded. The Delivery Controller then files `acceptance.md`
+  citing `AMD-0010 §2B` as the authority, merges and closes — no PR comment
+  from the Architect is required. **If any condition fails the mandate does
+  not apply**, and the Work Order waits for explicit two-artefact
+  acceptance. A condition that is arguably met is not met.
+  **Never pre-authorised:** WO-0008 (brokerage connection), WO-0009 (host
+  service install and phase closure), any Work Order whose first audit was
+  not GREEN, and any Work Order that triggered an Amendment.
 - No rebase, merge or cherry-pick may be scripted to continue through a
   conflict; a conflict stops the operation for inspection. After any
   history operation on a Work Order branch, re-verify the Base SHA in-scope
@@ -236,10 +262,34 @@ improvised architecture is not.
 
 A defect found after merge, a missed criterion, or a refinement is a **new
 Work Order** under the same PID (or an Amendment if the PID itself was
-wrong). It goes through the full chain. Hotfixes do not exist. This applies
-to repository plumbing and safety fixes as much as to application defects:
-the Architect writes the Work Order, the chain delivers it. The Architect
-does not fix code directly, however small the change (AMD-0005).
+wrong). It goes through the full chain. Hotfixes do not exist. This applies to repository plumbing and safety fixes as much as to
+application defects: the Architect writes the Work Order, the chain
+delivers it. The Architect does not fix code directly, however small the
+change (AMD-0005).
+
+### Standing rulings — do not return to the Architect for these (AMD-0010)
+
+1. **Amendment-caused in-scope change.** If the §6.3 in-scope diff is
+   non-empty **only** because of a commit an Amendment made, and that
+   Amendment also updated the Work Order's own scope or criteria for the
+   same path, the rebase is authorised: rebase, record the new Base SHA,
+   log it, continue.
+2. **Specification gap.** If a Work Order's stated deliverable cannot be
+   produced without one choice the Work Order does not name, and that
+   choice is conventional, zero-configuration and has **no behavioural,
+   security or interface consequence** (a build backend is the canonical
+   example), the Implementer may make it, must name it in its report, and
+   the Delivery Controller records it in
+   `docs/evidence/WO-NNNN/spec-gaps.md` for ratification at the next
+   Architect review. Anything with behavioural, security, schema,
+   dependency or interface consequence is a **stop**, unchanged.
+3. **`DELIVERY-LOG.md` merge conflicts.** Keep every line from both sides,
+   in timestamp order. Never drop a log line to resolve a conflict.
+4. **Tooling failures are not governance events.** Where a tool is
+   unavailable, use an equivalent route and note it in evidence.
+5. **Accepted residuals.** `docs/governance/ACCEPTED-RESIDUALS.md` lists
+   limitations already considered and accepted. Do not stop for one; do not
+   ask for a ruling on one.
 
 ## 10. Public repository rules
 

@@ -20,8 +20,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: Sync
-        run: if [ -f pyproject.toml ]; then uv sync --all-extras; else echo "no package yet"; fi
+        run: uv sync --all-extras
       - name: Lint
-        run: if [ -f pyproject.toml ]; then uv run ruff check .; else echo skip; fi
+        run: uv run ruff check .
       - name: Test (offline, no .env)
-        run: if [ -f pyproject.toml ]; then uv run python -m pytest -q; else echo skip; fi
+        run: uv run python -m pytest -q

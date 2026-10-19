@@ -11,3 +11,4 @@ Approved changes to PIDs, one file per amendment (`AMD-NNNN-<slug>.md`), per `do
 - [AMD-0007](AMD-0007-build-backend-and-gitignore-scope.md) — Build backend named (hatchling); `.gitignore` must not swallow governance docs (Applied)
 - [AMD-0008](AMD-0008-gitignore-negation-narrowed.md) — Narrow the governance-doc negation; ignore `*.txt` at all depths (Applied)
 - [AMD-0009](AMD-0009-commit-identity-and-rebase-discipline.md) — Commit identity on a public repository; no scripted rebase through a conflict (Applied)
+- [AMD-0010](AMD-0010-delegated-acceptance-mandate.md) — Delegated Acceptance Mandate; standing rulings for unguided delivery (Applied)

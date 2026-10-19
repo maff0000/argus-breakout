@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "argus"
+version = "0.1.0"
+description = "Argus-Breakout data and analysis pipeline"
+requires-python = ">=3.12"
+dependencies = [
+    "polars>=1.0",
+    "duckdb>=1.0",
+    "pyarrow>=15",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "typer>=0.12",
+    "structlog>=24",
+    "pyyaml>=6",
+    "tenacity>=8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov",
+    "respx",
+    "ruff>=0.5",
+]
+ibkr = ["ib_async>=1.0"]
+bootstrap = ["yfinance>=0.2.50"]
+
+[project.scripts]
+argus = "argus.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["argus"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.pytest.ini_options]
+markers = ["live: needs credentials/network"]
+addopts = "-m 'not live'"
