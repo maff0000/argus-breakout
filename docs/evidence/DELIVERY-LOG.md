@@ -25,3 +25,6 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-19T22:50Z  WO-0010  Merged  PR #2 merge commit (no squash); CI green
 2026-10-19T22:50Z  WO-0010  Closed  
 2026-10-19T22:52Z  WO-0002  In Progress  base 75b230dacb555dbe2f3f4347d640262348bf2b4a (main at Closure of WO-0001 and WO-0010; in-scope diff from 02187a7 empty); branch wo/0002-schema-and-store
+2026-10-19T23:00Z  WO-0002  Implemented  head e5682b9d57e09a4575cf25e57564fb94eecf244b (Implementer diff reviewed and committed by DC; mechanicals green on host)
+2026-10-19T23:00Z  WO-0002  Audited GREEN  audited sha e5682b9d57e09a4575cf25e57564fb94eecf244b; first audit; scope_fidelity no (tests/test_cli.py) so AMD-0010 mandate not applied; evidence docs/evidence/WO-0002/
+2026-10-19T23:00Z  WO-0002  PR Open  branch wo/0002-schema-and-store; Route B, awaiting ARCHITECT ACCEPTANCE

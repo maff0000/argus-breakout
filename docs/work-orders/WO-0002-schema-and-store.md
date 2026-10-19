@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | In Progress |
+| **Status** | PR Open |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.4, §8.5, §8.6 (base only), §8.7 (`init-store`) ; `DESIGN.md` §3.2 |
 | **Applicable Amendments** | AMD-0002 |
 | **Base SHA** | 75b230dacb555dbe2f3f4347d640262348bf2b4a |
