@@ -197,6 +197,28 @@ def test_fmp_fills_gap_after_hanshof(fmp_changes):
     assert fmp_only == {"IBKR", "APP", "HOOD", "EME"}
 
 
+def test_fmp_change_on_or_before_last_hanshof_snapshot_is_ignored(fmp_changes):
+    hanshof = load_hanshof_csv(HANSHOF_SAMPLE)
+    last = hanshof["date"].max()
+    baseline = build_membership(hanshof, fmp_changes, start=date(2015, 1, 1))
+    assert _intervals(baseline, "AAPL") == [(date(2015, 1, 1), None, "hanshof")]
+    stale = pl.DataFrame(
+        {
+            "date": [date(2025, 6, 2), date(2025, 1, 2), last],
+            "symbol": ["AAPL", "ZZZZ", "MSFT"],
+            "action": ["removed", "added", "removed"],
+            "reason": ["stale", "stale", "same-day"],
+        }
+    )
+    assert stale["date"].max() <= last
+    out = build_membership(hanshof, pl.concat([fmp_changes, stale]), start=date(2015, 1, 1))
+    # hanshof is primary up to its last snapshot: these FMP changes must change nothing
+    assert out.sort(["symbol", "start_date"]).equals(baseline.sort(["symbol", "start_date"]))
+    assert _intervals(out, "AAPL") == [(date(2015, 1, 1), None, "hanshof")]
+    assert _intervals(out, "MSFT") == [(date(2015, 1, 1), None, "hanshof")]
+    assert _intervals(out, "ZZZZ") == []
+
+
 # ---------------------------------------------------------------- CLI / refresh
 @pytest.fixture
 def cli_env(clean_env, tmp_path):
