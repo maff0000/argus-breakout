@@ -41,6 +41,10 @@ NO GIT RECORD → NOT DURABLE PROJECT AUTHORITY.
 cp .env.example .env   # fill in locally; .env is never committed
 ```
 
+Credential values are handed over in `/tmp` only (for example
+`/tmp/<provider>.txt`), moved into `.env` without being printed, and then
+shredded. Never place a credential file inside the repository working tree.
+
 This repository is public until project completion. No secrets,
 hostnames, ports, account identifiers or gateway details are ever
 committed; see `PID.md` §9.

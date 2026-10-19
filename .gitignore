@@ -22,3 +22,20 @@ htmlcov/
 .idea/
 .vscode/
 .DS_Store
+# credential-shaped files (never commit)
+# Placed AFTER the secrets block above so the `!.env.example` negation there
+# keeps working: `.env.example` stays tracked and is not matched below.
+# A real documentation .txt in the repository root must be added with
+# `git add -f` and a reviewer's attention.
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*secret*
+*credential*
+*apikey*
+*api-key*
+*api_key*
+*token*
+/*.txt
