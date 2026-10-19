@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | In Progress |
+| **Status** | PR Open |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.1, §8.2, §8.3, §8.7 (skeleton only), §9 |
 | **Applicable Amendments** | AMD-0002, AMD-0003, AMD-0004, AMD-0007 |
 | **Base SHA** | `02ddd97de53c34fb2914cab17ca7cf3e832d659f` (rebased from `c582c61…` under §6.3: in-scope diff empty; carries AMD-0006/0007 text; original `aec1125…` → `07f2e70…` per §11 D1) |
