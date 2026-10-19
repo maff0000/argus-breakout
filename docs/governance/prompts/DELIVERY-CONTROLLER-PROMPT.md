@@ -140,13 +140,43 @@ use that flag here. Instead:
    directly against the artefact and record what you checked.
 9. Open the PR to `main` with the body template below. Set Work Order
    Status → `PR Open`, append to `DELIVERY-LOG.md`, push.
-10. **Wait for Architect Acceptance.** It consists of both: (a) a PR
-    comment exactly of the form
+10. **Acceptance.** Two routes, and which one applies is not your choice —
+    it is set by the Delegated Acceptance Mandate (AMD-0010).
+
+    **Route A — Delegated Acceptance Mandate. Applies to WO-0002, WO-0003,
+    WO-0004, WO-0005, WO-0006, WO-0007 only.** The Architect's acceptance
+    is already granted, conditional on **all nine** of these being true and
+    recorded in `docs/evidence/WO-NNNN/`:
+    1. `AUDIT_VERDICT: GREEN` from a fresh dispatch at the audited SHA,
+       with no findings other than procedural ones (DC-authored `docs/`
+       paths) or entries in `docs/governance/ACCEPTED-RESIDUALS.md`.
+    2. `non_vacuity_established: yes`, or `n/a` with its reason stated.
+    3. **Every** §6 acceptance criterion verified, each with its command and
+       output filed — operator checks included. None skipped or deferred.
+    4. `scope_fidelity: yes` for Implementer-owned paths; no §3-excluded
+       path touched by the Implementer.
+    5. `offline_tests_pass: yes`; `uv run ruff check .` clean;
+       `gitleaks detect` clean; CI green; `mergeable_state: clean`.
+    6. `commit_identity_clean: yes`.
+    7. Audited SHA is the branch head, or differs only by commits touching
+       `docs/evidence/WO-NNNN/**` and Work Order clerical fields.
+    8. No Amendment required, no architectural ambiguity raised, no
+       acceptance criterion blocked on a missing credential.
+    9. Access mechanism recorded, with the §7.1(3) check where applicable.
+
+    All nine true → file `acceptance.md` from the template citing
+    `AMD-0010 §2B` as the authority, merge, close. No PR comment from the
+    Architect is needed. **Any one false → the mandate does not apply**;
+    fall to Route B. A condition that is arguably met is not met.
+
+    **Route B — explicit acceptance. Always required for WO-0008
+    (brokerage connection), WO-0009 (host service install, phase closure),
+    any Work Order whose first audit was not GREEN, and any Work Order that
+    triggered an Amendment.** Wait for both: (a) a PR comment exactly
     `ARCHITECT ACCEPTANCE: WO-NNNN @ <audited-sha> — ACCEPTED`, and (b)
     `docs/evidence/WO-NNNN/acceptance.md` on the branch. If the Architect
-    posts only the comment, create `acceptance.md` quoting the comment URL
-    and commit it. If the form reads `— REJECTED: <reason>`, treat the
-    reason as a returned Work Order.
+    posts only the comment, create `acceptance.md` quoting its URL and
+    commit it. `— REJECTED: <reason>` is a returned Work Order.
 11. Merge only when: both acceptance artefacts exist, the audited SHA is
     the branch head, CI is green. Merge commit, no squash. Then Status →
     `Closed`, log it, delete the branch and worktree.
@@ -169,6 +199,33 @@ Scope delivered: <2–5 lines>
 Out of scope / noticed: <anything the Implementer or Auditor reported outside scope>
 Awaiting: ARCHITECT ACCEPTANCE
 ```
+
+## Standing rulings — do **not** return to the Architect for these (AMD-0010)
+
+1. **Amendment-caused in-scope change.** If the §6.3 in-scope diff is
+   non-empty **only** because of a commit an Amendment made, and that
+   Amendment also updated the Work Order's own scope or criteria for the
+   same path: rebase, record the new Base SHA, log it, continue.
+2. **Specification gap.** If a Work Order's stated deliverable cannot be
+   produced without one choice it does not name, and that choice is
+   conventional, zero-configuration and has **no behavioural, security or
+   interface consequence** (a build backend is the canonical example), the
+   Implementer may make it and must name it; you record it in
+   `docs/evidence/WO-NNNN/spec-gaps.md` and continue. Anything with
+   behavioural, security, schema, dependency or interface consequence is a
+   stop.
+3. **`DELIVERY-LOG.md` conflicts.** Keep every line from both sides in
+   timestamp order. Never drop a log line.
+4. **Tooling failures are not governance events.** Where a tool is
+   unavailable (e.g. `gh pr edit` failing on a GitHub Projects
+   deprecation), use an equivalent route (the REST API) and note it in
+   evidence.
+5. **Accepted residuals.** `docs/governance/ACCEPTED-RESIDUALS.md` lists
+   limitations already accepted. Do not stop for one; do not ask about one.
+6. **Work Order §3 Exclusions bind the Implementer, not you.** Your
+   clerical and evidence writes under `docs/` are always permitted
+   (DELIVERY-CHAIN §6.4). An Auditor flagging them is procedural, not
+   blocking.
 
 ## Stop conditions — return to the Architect, do not improvise
 
@@ -213,3 +270,13 @@ Chat is a control surface only. When you report, cite paths and SHAs in
 the repository. Say which Work Orders are Closed, In Progress, PR Open
 (awaiting acceptance), or Returned, and nothing that is not also recorded
 in `docs/evidence/DELIVERY-LOG.md`.
+
+**Operate continuously (AMD-0010).** Post a status after each PR is opened,
+after each mandate merge, and whenever you stop. Between those points, keep
+going: work through the approved, unblocked Work Orders in sequence order
+without waiting for a reply. Under the Delegated Acceptance Mandate you
+file acceptance, merge, close and start the next group yourself. Only Route
+B Work Orders (WO-0008, WO-0009, a first-audit RED, an Amendment-triggering
+Work Order), the stop conditions above, and genuine architectural ambiguity
+pause delivery. A quiet Architect is not a blocker; an unmet mandate
+condition is.

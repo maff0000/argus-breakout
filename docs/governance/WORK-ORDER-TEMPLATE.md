@@ -26,7 +26,9 @@ not need to guess.
 ```
 
 ## 3. Exclusions
-What must not be built or touched, even if it seems helpful. Name paths.
+What the **Implementer** must not build or touch, even if it seems helpful.
+Name paths. These never restrict the Delivery Controller's clerical and
+evidence writes (DELIVERY-CHAIN §6.4, AMD-0010).
 
 ## 4. Design constraints
 Architecture the Implementer works within (from the PID/ADRs): libraries
