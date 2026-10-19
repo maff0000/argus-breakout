@@ -22,3 +22,29 @@ htmlcov/
 .idea/
 .vscode/
 .DS_Store
+# credential-shaped files (never commit)
+# Placed AFTER the secrets block above so the `!.env.example` negation there
+# keeps working: `.env.example` stays tracked and is not matched below.
+# `*.txt` is the shape of a dropped key file, at any depth: a legitimate .txt
+# anywhere in the repository must be added with `git add -f` and a reviewer's
+# attention.
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*secret*
+*credential*
+*apikey*
+*api-key*
+*api_key*
+*token*
+*.txt
+# Governance documents must never be silently ignored (AMD-0007, narrowed by
+# AMD-0008): they reach main by direct commit, so a Markdown name containing
+# "secret" or "token" must not hide one. The negations are scoped to Markdown
+# only, come AFTER the credential patterns above, and do not re-include .env,
+# key files or .txt under docs/. Credential-shaped Markdown filenames are not
+# filtered; gitleaks content scanning is the control for prose.
+!/docs/**/*.md
+!/*.md

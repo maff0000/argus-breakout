@@ -13,3 +13,11 @@ regexes = [
 paths = [
   '''\.env\.example$''',
 ]
+
+# Flags a staged file by its PATH, regardless of content, so an empty-looking
+# or oddly formatted key file is still blocked. Narrow on purpose: requires a
+# provider/credential word, so requirements.txt-style names do not match.
+[[rules]]
+id = "argus-bare-key-file"
+description = "Credential-shaped file name (provider key/token/secret file)"
+path = '''(?i)(polygon|fmp|ibkr|llm|api)[-_. ]?(key|token|secret)?\.(txt|key|json)$'''

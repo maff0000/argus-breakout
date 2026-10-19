@@ -2,15 +2,15 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Approved |
+| **Status** | Closed |
 | **Parent PID** | `PID.md` (PID-ARGUS-0000) §9 Public Repository Security |
 | **Applicable Amendments** | AMD-0005, AMD-0006, AMD-0007, AMD-0008 |
-| **Base SHA** | main at approval of this Work Order (the commit introducing this file) |
+| **Base SHA** | `02ddd97de53c34fb2914cab17ca7cf3e832d659f` (rebased from `c582c61…` under §6.3: in-scope diff empty; main merged at `4d1f2f1` to carry AMD-0008/0009 text, scope-path diff from `02ddd97…` empty) |
 | **Branch** | `wo/0010-secret-drop-hardening` |
 | **Depends on** | none |
 | **Parallel group** | P0-A (independent of WO-0001; touches no path in its scope) |
 | **Presentation target** | FUNCTIONAL_ONLY |
-| **PR** | — |
+| **PR** | https://github.com/maff0000/argus-breakout/pull/2 |
 | **Evidence** | `docs/evidence/WO-0010/` |
 
 ## 1. Objective
