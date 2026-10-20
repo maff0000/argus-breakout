@@ -67,6 +67,14 @@ acceptance test for this decision.
 - The Auditor gains a portability check per Work Order (AMD-0004).
 - ADR-0007's tools directory stays development-only and is not part of the
   delivered artefact.
+- **A relocated or volume-mounted store needs its Parquet views recreated**
+  (AMD-0017). Found in practice when a copied store silently read its
+  source directory. Precisely the host-coupling this ADR exists to surface
+  before packaging: in a container the store arrives as a mount at a path
+  that need not match where it was built, so PID-ARGUS-0006's entrypoint
+  must run a read-write `argus init-store` (idempotent) before the
+  pipeline, and `Store.connect()`'s identity check makes the failure loud
+  if it does not.
 
 ## Alternatives considered
 **Containerise now, before WO-0001.** Rejected for this build phase on the
