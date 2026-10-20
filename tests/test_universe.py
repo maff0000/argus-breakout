@@ -24,6 +24,7 @@ from argus.data.universe import (
     BackDatedRefreshError,
     MembershipInvariantError,
     Rename,
+    _require_members_equal_table,
     build_membership,
     check_refresh_date,
     current_members_without_open_row,
@@ -284,6 +285,8 @@ def _mock_sources(
     fmp_status: int = 200,
     profile_status: int = 200,
     hanshof_text: str | None = None,
+    history=None,
+    current=None,
 ):
     """respx routes for every source; `fmp_status`!=200 makes the three non-profile endpoints
     (and `profile_status`!=200 the profile endpoint) answer with that HTTP status."""
@@ -294,8 +297,8 @@ def _mock_sources(
         )
     )
     for endpoint, body in (
-        ("historical-sp500-constituent", COMPLETE_HISTORY),
-        ("sp500-constituent", CURRENT),
+        ("historical-sp500-constituent", COMPLETE_HISTORY if history is None else history),
+        ("sp500-constituent", CURRENT if current is None else current),
     ):
         respx.get(BASE_URL + endpoint).mock(
             return_value=httpx.Response(200, json=body)
@@ -553,18 +556,18 @@ def test_gap_derivation_when_fmp_402(cli_env):
     assert "APP" in store.members_on(date(2025, 9, 22))
 
 
-def test_derivation_respects_as_of():
-    # build_membership's own as_of semantics (a refresh itself is limited to 7 days back,
-    # AMD-0015 2A, so this is exercised on the builder directly)
+def test_membership_is_always_built_through_today():
+    # AMD-0015 2A: build_membership has no as_of bound - a derived addition is an open row
+    # whatever date the run was given (a back-dated refresh is limited to 7 days, but the
+    # table is the table as of now)
     wiki = fetch_wikipedia_constituents(_wiki_client())
     table = wiki.select(["symbol", "date_added"])
-    m = build_membership(
-        load_hanshof_csv(HANSHOF_SAMPLE), table, None, as_of=date(2025, 9, 1)
-    )
-    on = members_on_date(m, date(2025, 9, 1))
-    assert "IBKR" in on and "APP" not in on
+    with pytest.raises(TypeError):
+        build_membership(load_hanshof_csv(HANSHOF_SAMPLE), table, None, as_of=date(2025, 9, 1))
+    m = build_membership(load_hanshof_csv(HANSHOF_SAMPLE), table, None)
     exact = m.filter(pl.col("source") == "wikipedia-derived-exact")
-    assert exact.height == 1  # only IBKR <= as_of
+    assert exact.height == wiki.filter(pl.col("date_added") > date(2025, 8, 23)).height
+    assert "APP" in members_on_date(m, date(2026, 10, 20))
 
 
 @respx.mock
@@ -689,7 +692,6 @@ def test_rename_preserves_continuity():
         _mini_current(),
         None,
         start=date(2015, 1, 1),
-        as_of=AS_OF,
         renames=[Rename("OLDX", "NEWX", eff)],
     )
     assert _intervals(df, "OLDX") == [(date(2024, 1, 2), date(2025, 10, 14), "rename-mapped")]
@@ -717,7 +719,6 @@ def test_rename_unknown_effective_is_bounded_not_added():
         _mini_current(),
         None,
         start=date(2015, 1, 1),
-        as_of=AS_OF,
         renames=[Rename("OLDX", "NEWX", None)],
     )
     nxt = next_trading_day(H)
@@ -752,7 +753,6 @@ def test_rename_already_covered_by_change_rows_is_not_double_counted():
         None,
         changes,
         start=date(2015, 1, 1),
-        as_of=AS_OF,
         renames=[Rename("OLDX", "NEWX", None)],
         current_symbols={"AAA", "NEWX"},
     )
@@ -762,7 +762,7 @@ def test_rename_already_covered_by_change_rows_is_not_double_counted():
     # and where the change rows do NOT cover the pair, the map fills it in routes (a)/(b) too
     none = changes.clear()
     df2 = build_membership(
-        _mini_hanshof(), None, none, start=date(2015, 1, 1), as_of=AS_OF,
+        _mini_hanshof(), None, none, start=date(2015, 1, 1),
         renames=[Rename("OLDX", "NEWX", None)], current_symbols={"AAA", "NEWX"},
     )
     assert _intervals(df2, "NEWX") == [(date(2025, 8, 25), None, "rename-bounded")]
@@ -882,7 +882,7 @@ def test_open_row_invariant_is_a_plain_open_interval_test():
     # AMD-0015 2A: every current-table symbol has exactly one row with end_date IS NULL;
     # there is no as_of in the rule
     hanshof = pl.DataFrame({"date": [date(2024, 1, 2)], "symbols": [["AAA", "BBB"]]})
-    m = build_membership(hanshof, None, _no_changes(), as_of=date(2024, 6, 1))
+    m = build_membership(hanshof, None, _no_changes())
     cur = _current_rows(("AAA", date(2010, 1, 4)), ("BBB", date(2010, 1, 4)))
     assert current_members_without_open_row(m, cur) == []
     # a current symbol with no row at all, however old its Date added: named
@@ -908,7 +908,7 @@ def test_open_row_invariant_is_a_plain_open_interval_test():
 def test_unmapped_hanshof_internal_rename_is_named():
     # PARA->PSKY-style step inside hanshof, not in the map: the later ticker has no open row
     hanshof = pl.DataFrame({"date": [date(2024, 1, 2)], "symbols": [["AAA", "PARA"]]})
-    m = build_membership(hanshof, None, _no_changes(), as_of=date(2024, 6, 30))
+    m = build_membership(hanshof, None, _no_changes())
     cur = _current_rows(("AAA", date(2010, 1, 4)), ("SKYD", date(1994, 9, 30)))
     assert current_members_without_open_row(m, cur) == ["SKYD"]
 
@@ -1016,6 +1016,130 @@ def test_today_and_last_trading_day_succeed(cli_env):
     default = runner.invoke(app, ["universe", "refresh"])  # no --date = today (pinned)
     assert default.exit_code == 0, default.output
     assert "members on 2026-10-20: 503" in default.output
+
+
+# ---------------------------------------------------------------- F1: recent changes, back-dated
+RECENT = date(2026, 10, 20)  # the pinned today: after both back-dated run dates below
+RECENT_ADD, RECENT_DROP = "ZNEW", "ZBRA"  # ZBRA: a hanshof@H member that leaves the index
+
+
+def _recent_change_sources(*, fmp: bool):
+    """Wikipedia/FMP-current with ZNEW added and ZBRA removed on RECENT. `fmp` selects the
+    FMP-changes route (history carries both events) vs the derived route (page only)."""
+    html = WIKI_HTML
+    row = re.search(r"<tr>\s*<td><a href=\"#\">ZBRA</a></td>.*?</tr>", html, re.S)
+    assert row
+    new_row = (
+        f'<tr>\n<td><a href="#">{RECENT_ADD}</a></td>\n<td><a href="#">New Co</a></td>\n'
+        "<td>Financials</td>\n<td>Investment Banking &amp; Brokerage</td>\n"
+        f"<td>{RECENT.isoformat()}</td></tr>"
+    )
+    html = html.replace(row.group(0), new_row)
+    current = [r for r in CURRENT if r["symbol"] != RECENT_DROP] + [
+        {
+            "symbol": RECENT_ADD,
+            "name": "New Co",
+            "sector": "Financials",
+            "subSector": "Investment Banking & Brokerage",
+            "dateFirstAdded": RECENT.isoformat(),
+        }
+    ]
+    history = COMPLETE_HISTORY + [
+        {
+            "date": RECENT.isoformat(),
+            "symbol": RECENT_ADD,
+            "removedTicker": RECENT_DROP,
+            "reason": "fixture",
+        }
+    ]
+    return html, history, current
+
+
+def _assert_recent_change_invariants(store: Store, today=date(2026, 10, 20)):
+    syms = _current_symbols_of(store)
+    assert RECENT_ADD in syms and RECENT_DROP not in syms
+    open_syms = set(
+        store.read("SELECT symbol FROM membership WHERE end_date IS NULL")["symbol"].to_list()
+    )
+    assert open_syms >= syms and RECENT_ADD in open_syms and RECENT_DROP not in open_syms
+    assert set(store.members_on(today)) == syms  # equals the fetched table, as a set
+
+
+def _current_symbols_of(store: Store) -> set[str]:
+    wiki_syms = set(_current_symbols())
+    return (wiki_syms - {RECENT_DROP}) | {RECENT_ADD}
+
+
+@respx.mock
+@pytest.mark.parametrize("route", ["derived", "fmp-changes"])
+@pytest.mark.parametrize("arg", ["2026-10-19", "2026-10-17"])  # last trading day; 3 days back
+def test_back_dated_run_with_recent_add_and_removal_succeeds(cli_env, route, arg):
+    fmp = route == "fmp-changes"
+    html, history, current = _recent_change_sources(fmp=fmp)
+    _mock_sources(
+        wiki_html=html, fmp_status=200 if fmp else 402, history=history, current=current
+    )
+    result = runner.invoke(app, ["universe", "refresh", "--date", arg])
+    assert result.exit_code == 0, result.output
+    assert "current members without row: 0" in result.output
+    assert "current table symbols: 503" in result.output
+    store = Store(cli_env)
+    _assert_recent_change_invariants(store)
+    rows = store.read(
+        "SELECT * FROM membership WHERE symbol IN (?, ?)", [RECENT_ADD, RECENT_DROP]
+    )
+    by = {
+        r["symbol"]: (r["start_date"], r["end_date"], r["source"])
+        for r in rows.iter_rows(named=True)
+    }
+    if fmp:
+        assert by[RECENT_ADD] == (RECENT, None, "fmp")
+        assert by[RECENT_DROP][1] == date(2026, 10, 19)  # the trading day before the removal
+        assert "membership gap route: fmp" in result.output
+    else:
+        assert by[RECENT_ADD] == (RECENT, None, "wikipedia-derived-exact")
+        assert by[RECENT_DROP][1] == date(2025, 8, 23)  # bounded at H
+    # the report's "members on <date>" line is the --date's own membership: ZBRA is still a
+    # member then on the FMP route (closes 10-19), already bounded out on the derived route;
+    # ZNEW is not a member yet
+    assert f"members on {arg}: {503 if fmp else 502}" in result.output
+    # the Python API agrees
+    respx.reset()
+    _mock_sources(
+        wiki_html=html, fmp_status=200 if fmp else 402, history=history, current=current
+    )
+    store2, report = _run_refresh(cli_env, as_of=date.fromisoformat(arg))
+    assert report.n_members_today == report.n_current_table == 503
+    assert report.current_members_without_row == 0
+
+
+@respx.mock
+def test_back_dated_dropped_rename_map_names_only_the_renames(cli_env, tmp_path, monkeypatch):
+    # FMP-200 route, a recent add in the window, rename map dropped: still exit 1, nothing
+    # written, and the message names the five renamed tickers - NOT the legitimate recent add
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    for name in ("gics.yaml", "universe.yaml"):
+        shutil.copy(CONFIG / name, cfg / name)
+    monkeypatch.setenv("ARGUS_CONFIG_DIR", str(cfg))
+    html, history, current = _recent_change_sources(fmp=True)
+    _mock_sources(wiki_html=html, history=history, current=current)
+    for arg in ("2026-10-19", "2026-10-17"):
+        result = runner.invoke(app, ["universe", "refresh", "--date", arg])
+        assert result.exit_code == 1, result.output
+        for sym in ("BNY", "FISV", "MRSH", "SKYD", "VMRK"):
+            assert sym in result.output
+        assert RECENT_ADD not in result.output
+        assert "exactly one open membership row" in result.output
+        store = Store(cli_env)
+        assert store.read("SELECT count(*) AS n FROM membership")["n"][0] == 0
+
+
+def test_members_must_equal_the_table_as_sets_not_counts():
+    # same size, different symbols: a count comparison would pass this
+    _require_members_equal_table({"A", "B"}, {"A", "B"}, date(2026, 10, 20))
+    with pytest.raises(MembershipInvariantError, match="C"):
+        _require_members_equal_table({"A", "B"}, {"A", "C"}, date(2026, 10, 20))
 
 
 # ---------------------------------------------------------------- AMD-0016 2C classification

@@ -463,14 +463,13 @@ def _apply_renames(
     renames: list[Rename],
     current: set[str],
     last_hanshof: date,
-    as_of: date | None,
 ) -> None:
     """Turn each applicable mapped pair into one continuous membership (AMD-0014 2C).
 
     Applies only when the NEW ticker is a current member with no open interval and the OLD
     ticker is open at the gap; a pair already covered by explicit change rows is untouched.
-    A rename whose start lies after `as_of` is not applied: the new ticker then has no open
-    row and the unconditional invariant (AMD-0015 2A) fails loudly.
+    A rename whose start lies after today is still applied; `refresh()` then fails loudly
+    because the new ticker is not a member today (AMD-0015 2A).
     """
     for r in renames:
         if r.new not in current or r.new in open_ or r.old not in open_:
@@ -483,8 +482,6 @@ def _apply_renames(
             new_start = r.effective
         else:
             log.warning("rename_not_after_hanshof_ignored", old=r.old, new=r.new)
-            continue
-        if as_of is not None and new_start > as_of:
             continue
         began, _ = open_.pop(r.old)
         closed.append((r.old, began, old_end, src))
@@ -505,7 +502,6 @@ def build_membership(
     current_table: pl.DataFrame | None,
     fmp_changes: pl.DataFrame | None,
     start: date = MEMBERSHIP_START,
-    as_of: date | None = None,
     changes_source: str = SRC_FMP,
     renames: list[Rename] | None = None,
     current_symbols: set[str] | None = None,
@@ -515,8 +511,9 @@ def build_membership(
     hanshof snapshots are diffed in order up to the last snapshot H (source 'hanshof').
     The gap after H is filled by the first available route: `fmp_changes` when given
     (a: source 'fmp', or b: source 'wikipedia-changes' - pass `changes_source`), else
-    (c) derivation from `current_table` [symbol, date_added]: a current row whose
-    `date_added` is in (H, as_of] starts that day ('wikipedia-derived-exact'); a symbol in
+    (c) derivation from `current_table` [symbol, date_added]: membership is always built through
+    today, whatever the run's --date (AMD-0015 2A): a current row whose
+    `date_added` is after H starts that day ('wikipedia-derived-exact'); a symbol in
     hanshof@H but absent from the current table ends at H ('wikipedia-derived-bounded').
     A symbol removed on D is not a member on D: `end_date` is the last trading day before
     D (closed interval, AMD-0011). Contiguous or overlapping intervals of one symbol are
@@ -567,16 +564,14 @@ def build_membership(
                     closed.append((sym, began, previous_trading_day(d), src))
             else:
                 raise ValueError(f"unknown change action: {action!r}")
-        _apply_renames(open_, closed, renames, current_set, last_hanshof, as_of)
-    elif current_table is not None and (as_of is None or as_of > last_hanshof):
+        _apply_renames(open_, closed, renames, current_set, last_hanshof)
+    elif current_table is not None:
         current = set(current_table["symbol"].to_list())
-        _apply_renames(open_, closed, renames, current, last_hanshof, as_of)
+        _apply_renames(open_, closed, renames, current, last_hanshof)
         for sym in sorted(set(open_) - current):  # left the index somewhere in (H, today]
             began, _ = open_.pop(sym)
             closed.append((sym, began, last_hanshof, SRC_DERIVED_BOUNDED))
         added = current_table.filter(pl.col("date_added") > last_hanshof)
-        if as_of is not None:
-            added = added.filter(pl.col("date_added") <= as_of)
         for rec in added.sort(["date_added", "symbol"]).iter_rows(named=True):
             if rec["symbol"] not in open_:
                 open_[rec["symbol"]] = (rec["date_added"], SRC_DERIVED_EXACT)
@@ -645,7 +640,7 @@ def configured_etfs(universe_yaml: dict) -> list[str]:
 @dataclass
 class UniverseReport:
     n_symbols: int
-    n_members_today: int
+    n_members_today: int  # members_on(today); equals the current table (AMD-0014/0015)
     n_missing_group: int
     membership_rows: int
     sources_used: list[str]
@@ -658,6 +653,7 @@ class UniverseReport:
     # AMD-0016 2C: symbols that only ever appear in `membership` (not current, not ETFs) and
     # were left without an industry group; counted, never an error and never a default
     n_unclassified: int = 0
+    n_members_as_of: int = 0  # members_on(--date), informational; equals today's for a today run
 
 
 def members_on_date(membership: pl.DataFrame, d: date) -> set[str]:
@@ -731,11 +727,24 @@ def _resolve_current(
     return [merged[k] for k in sorted(merged)]
 
 
+def _require_members_equal_table(members: set[str], table: set[str], today: date) -> None:
+    """AMD-0014 / AMD-0015 2A: members today are exactly the fetched current table (as sets)."""
+    if members == table:
+        return
+    missing, extra = sorted(table - members), sorted(members - table)
+    raise MembershipInvariantError(
+        f"membership on {today.isoformat()} has {len(members)} members but the current table "
+        f"has {len(table)} symbols; in table but not members: {', '.join(missing[:20]) or '-'}; "
+        f"members but not in table: {', '.join(extra[:20]) or '-'} (AMD-0014)"
+    )
+
+
 def refresh(
     store: Store, settings: Settings, http: httpx.Client, as_of: date | None = None
 ) -> UniverseReport:
     """Populate `symbols` and rebuild `membership`; returns a UniverseReport."""
-    as_of = as_of or _today_utc()
+    today = _today_utc()
+    as_of = as_of or today
     check_refresh_date(as_of)  # before anything is read, fetched or written (AC10)
     settings.require("fmp_api_key")
     gics = _load_yaml(settings.argus_config_dir, "gics.yaml")
@@ -777,13 +786,13 @@ def refresh(
     changes_source = SRC_FMP
     gap_route = ROUTE_DERIVED
     try:
-        changes = fmp.historical_sp500_changes().filter(pl.col("date") <= as_of)
+        changes = fmp.historical_sp500_changes()
         gap_route = ROUTE_FMP
         sources.append("fmp:historical-sp500-constituent")
     except ProviderUnavailable as exc:
         log.warning("fmp_changes_unavailable", error=str(exc))
     if changes is None and wiki_changes is not None:
-        changes = wiki_changes.filter(pl.col("date") <= as_of)
+        changes = wiki_changes
         changes_source = SRC_WIKI_CHANGES
         gap_route = ROUTE_WIKI_CHANGES
         sources.append("wikipedia:changes")
@@ -804,7 +813,6 @@ def refresh(
         else None,
         changes,
         start=MEMBERSHIP_START,
-        as_of=as_of,
         changes_source=changes_source,
         renames=renames,
         current_symbols={r["symbol"] for r in current},
@@ -822,12 +830,8 @@ def refresh(
             f"row: {', '.join(without_row)} "
             "(a ticker rename missing from ticker_renames.yaml, or not yet effective? AMD-0014)"
         )
-    on_as_of = members_on_date(membership, as_of)
-    if len(on_as_of) != n_current_table:
-        raise MembershipInvariantError(
-            f"membership on {as_of.isoformat()} has {len(on_as_of)} members but the current "
-            f"table has {n_current_table} symbols"
-        )
+    current_set = {r["symbol"] for r in current}
+    _require_members_equal_table(members_on_date(membership, today), current_set, today)
 
     # --- industry group for every current member (no silent defaults), then for historical-only
     # symbols (AMD-0016 2C). One cap and one availability flag cover BOTH cohorts, and current
@@ -933,12 +937,9 @@ def refresh(
         str(k): int(v)
         for k, v in membership.group_by("source").len().sort("source").iter_rows()
     }
-    n_members_today = len(store.members_on(as_of))
-    if n_members_today != n_current_table:
-        raise MembershipInvariantError(
-            f"members_on({as_of.isoformat()}) returned {n_members_today} but the current table "
-            f"has {n_current_table} symbols (AMD-0014)"
-        )
+    stored_today = set(store.members_on(today))
+    _require_members_equal_table(stored_today, current_set, today)
+    n_members_today = len(stored_today)
     n_symbols = store.read("SELECT count(*) AS n FROM symbols")["n"][0]
     return UniverseReport(
         n_symbols=int(n_symbols),
@@ -952,6 +953,7 @@ def refresh(
         current_members_without_row=len(without_row),
         current_members_without_row_symbols=without_row,
         n_unclassified=n_unclassified,
+        n_members_as_of=len(store.members_on(as_of)),
     )
 
 

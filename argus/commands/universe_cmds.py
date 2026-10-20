@@ -60,7 +60,7 @@ def refresh_cmd(
         detail = f"{n_bounded} bounded removals (max {MAX_BOUNDED_ROWS}); {detail}"
     store.log_ingest(as_of, "universe", report.membership_rows, status, detail[:500])
     typer.echo(f"symbols: {report.n_symbols}")
-    typer.echo(f"members on {as_of.isoformat()}: {report.n_members_today}")
+    typer.echo(f"members on {as_of.isoformat()}: {report.n_members_as_of}")
     typer.echo(f"current table symbols: {report.n_current_table}")
     typer.echo(f"current members without row: {report.current_members_without_row}")
     typer.echo(f"missing industry group: {report.n_missing_group}")
