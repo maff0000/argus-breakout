@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | In Progress |
+| **Status** | PR Open |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.7 (`universe refresh`), §8.8 ; `DESIGN.md` §3.1, §3.3 (GICS rule), §4 ; ADR-0003, ADR-0005 |
 | **Applicable Amendments** | AMD-0002, AMD-0004, AMD-0013 |
 | **Base SHA** | 19d9ca0ee0a441a1f74cd9030e18f2f94fecf517 |

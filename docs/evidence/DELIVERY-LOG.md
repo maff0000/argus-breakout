@@ -45,3 +45,6 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-20T07:46Z  WO-0011  Accepted  delegated under AMD-0013 s3; audit GREEN, ACs filed
 2026-10-20T07:46Z  WO-0011  Merged  PR #4
 2026-10-20T07:46Z  WO-0011  Closed  evidence docs/evidence/WO-0011/
+2026-10-20T08:03Z  WO-0003  Implemented  head 465b8f3559ef47ae82dd659d998470183c1edda1 (Implementer diff reviewed and committed by DC; mechanicals green on host)
+2026-10-20T08:03Z  WO-0003  Audited GREEN  audited sha 22a3ad1 (PR head 465b8f3559ef47ae82dd659d998470183c1edda1 = audited tree + clerical main merge); evidence docs/evidence/WO-0003/
+2026-10-20T08:03Z  WO-0003  PR Open  branch wo/0003-universe-and-membership; awaiting ARCHITECT DECISION (audit finding 1, rename gap)
