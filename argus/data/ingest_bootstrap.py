@@ -31,6 +31,12 @@ class BootstrapResult:
     n_rows: int = 0  # bars_raw rows written
     failed: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    # AMD-0015 2B: CURRENT = active `symbols` rows (members + ETFs); HISTORICAL = every other
+    # requested symbol (historical membership only, or unknown to `symbols`).
+    current_written: int = 0
+    current_failed: list[str] = field(default_factory=list)
+    historical_written: int = 0
+    historical_unavailable: list[str] = field(default_factory=list)
 
 
 def _weekdays(start: date, end: date) -> int:
@@ -50,6 +56,19 @@ def _default_symbols(store: Store) -> list[str]:
         "SELECT symbol FROM symbols UNION SELECT symbol FROM membership ORDER BY symbol"
     )
     return [s for s in df["symbol"].to_list() if s and is_valid(s)]
+
+
+def current_cohort(store: Store, symbols: list[str]) -> set[str]:
+    """The subset of `symbols` with an active `symbols` row (AMD-0015 2B CURRENT cohort).
+
+    Anything else, including a symbol unknown to `symbols`, is HISTORICAL.
+    """
+    if not symbols:
+        return set()
+    df = store.read(
+        "SELECT symbol FROM symbols WHERE active AND symbol IN (SELECT unnest(?))", [symbols]
+    )
+    return set(df["symbol"].to_list())
 
 
 def _covered(store: Store, symbols: list[str], start: date, end: date) -> set[str]:
@@ -83,6 +102,7 @@ def bootstrap_history(
     if not wanted:
         return result
 
+    current = current_cohort(store, wanted)
     done = _covered(store, wanted, start, end)
     result.skipped = [s for s in wanted if s in done]
     todo = [s for s in wanted if s not in done]
@@ -96,6 +116,8 @@ def bootstrap_history(
             actions = provider.actions(chunk, start, end)
         except Exception as exc:  # fault isolation: the whole chunk fails, the run continues
             result.failed.extend(chunk)
+            result.current_failed.extend(x for x in chunk if x in current)
+            result.historical_unavailable.extend(x for x in chunk if x not in current)
             detail = f"{label}: {type(exc).__name__}: {str(exc)[:200]}"
             log.warning("bootstrap_chunk_failed", chunk=n, symbols=len(chunk), error=detail)
             store.log_ingest(end, SOURCE, 0, "failed", detail)
@@ -104,6 +126,10 @@ def bootstrap_history(
         got = set(bars["symbol"].to_list())
         missing = [s for s in chunk if s not in got]
         result.failed.extend(missing)
+        result.current_failed.extend(x for x in missing if x in current)
+        result.historical_unavailable.extend(x for x in missing if x not in current)
+        result.current_written += sum(1 for x in got if x in current)
+        result.historical_written += sum(1 for x in got if x not in current)
         rows = 0
         if bars.height:
             raw = bars.select(
@@ -138,4 +164,6 @@ def bootstrap_history(
         store.log_ingest(end, SOURCE, rows, "ok", detail)
         log.info("bootstrap_chunk_done", chunk=n, rows=rows, missing=len(missing))
     result.failed.sort()
+    result.current_failed.sort()
+    result.historical_unavailable.sort()
     return result

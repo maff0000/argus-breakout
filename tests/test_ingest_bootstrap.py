@@ -125,6 +125,7 @@ def test_symbol_without_data_is_failed(store, calls):
     store.upsert("symbols", pl.DataFrame({"symbol": ["ZZZ"], "active": [True]}), ["symbol"])
     res = bootstrap_history(store, _provider(), START, END, None)
     assert res.failed == ["ZZZ"] and res.n_symbols == 3
+    assert res.current_failed == ["ZZZ"] and res.historical_unavailable == []  # active -> CURRENT
 
 
 def test_membership_symbols_included_and_bad_symbols_rejected(store, calls):
@@ -264,21 +265,36 @@ def test_cli_exit_code_at_threshold(clean_env, tmp_path, monkeypatch, written, f
     names = [f"F{i}" for i in range(failed)]
     monkeypatch.setattr(
         "argus.commands.ingest_bootstrap.bootstrap_history",
-        lambda *a, **k: BootstrapResult(n_symbols=written, n_rows=1, failed=names),
+        lambda *a, **k: BootstrapResult(
+            n_symbols=written, n_rows=1, failed=names, current_written=written,
+            current_failed=names,
+        ),
     )
     res = CliRunner().invoke(app, ["ingest", "bootstrap", "--start", "2024-01-02"])
     assert res.exit_code == code, res.output
-    assert "failed: " + ",".join(names) in res.output  # failed list reported either way
+    assert "current failed: " + ",".join(names) in res.output  # failed list reported either way
 
 
 # ------------------------------------- AMD-0014 2E: skipped symbols count as successes
 def _run_cli(clean_env, tmp_path, monkeypatch, written, skipped, failed):
     clean_env.setenv("ARGUS_STORE_DIR", str(tmp_path / "store"))
+    skipped_names = [f"S{i}" for i in range(skipped)]
+    st = Store(tmp_path / "store")
+    st.init_schema()
+    if skipped_names:  # the exit rule classifies skipped symbols from `symbols` (AMD-0015 2B)
+        st.upsert(
+            "symbols",
+            pl.DataFrame({"symbol": skipped_names, "active": [True] * skipped}),
+            ["symbol"],
+        )
+    names = [f"F{i}" for i in range(failed)]
     result = BootstrapResult(
         n_symbols=written,
         n_rows=1,
-        failed=[f"F{i}" for i in range(failed)],
-        skipped=[f"S{i}" for i in range(skipped)],
+        failed=names,
+        skipped=skipped_names,
+        current_written=written,
+        current_failed=names,
     )
     monkeypatch.setattr(
         "argus.commands.ingest_bootstrap.bootstrap_history", lambda *a, **k: result
@@ -304,3 +320,136 @@ def test_cli_exit_code_counts_skips_as_successes(
     """Fails if skipped symbols are left out of the threshold (pre-AMD-0014 2E behaviour)."""
     res = _run_cli(clean_env, tmp_path, monkeypatch, written, skipped, failed)
     assert res.exit_code == code, res.output
+
+
+# ---- AMD-0015 2B: cohorts and the CURRENT-only exit rule
+def _cohort_store(store):
+    """AAA, BBB, BRK.B active (CURRENT); OLD is an inactive row and HIST membership-only."""
+    store.upsert("symbols", pl.DataFrame({"symbol": ["OLD"], "active": [False]}), ["symbol"])
+    store.upsert(
+        "membership",
+        pl.DataFrame(
+            {"symbol": ["HIST"], "start_date": [date(2010, 1, 1)],
+             "end_date": [date(2018, 1, 1)], "source": ["t"]}
+        ),
+        ["symbol", "start_date"],
+    )
+
+
+def test_cohort_assignment_active_vs_historical_only(store, calls):
+    """Active symbols are CURRENT; inactive rows and membership-only symbols are HISTORICAL.
+
+    Fails if classification ignores `active`, or if everything is treated as current.
+    """
+    _cohort_store(store)
+    res = bootstrap_history(store, _provider(), START, END, None)
+    assert (res.current_written, res.current_failed) == (3, [])
+    assert (res.historical_written, res.historical_unavailable) == (0, ["HIST", "OLD"])
+    assert res.failed == ["HIST", "OLD"]  # combined list keeps its meaning
+    assert res.n_symbols == 3
+
+
+def test_cohort_assignment_explicit_symbols_unknown_is_historical(store, calls):
+    """`--symbols` is classified by the same rule: unknown to `symbols` = HISTORICAL."""
+    res = bootstrap_history(store, _provider(), START, END, ["AAA", "NOPE"])
+    assert (res.current_written, res.current_failed) == (1, [])
+    assert (res.historical_written, res.historical_unavailable) == (0, ["NOPE"])
+
+
+def test_historical_symbol_with_data_counts_as_historical_written(store, calls):
+    store.upsert("symbols", pl.DataFrame({"symbol": ["BBB"], "active": [False]}), ["symbol"])
+    res = bootstrap_history(store, _provider(), START, END, None)
+    assert (res.current_written, res.historical_written) == (2, 1)
+    assert res.historical_unavailable == [] and res.current_failed == []
+
+
+def test_failed_chunk_is_split_by_cohort(store, calls):
+    store.upsert("symbols", pl.DataFrame({"symbol": ["BOOM"], "active": [True]}), ["symbol"])
+    res = bootstrap_history(store, _provider(), START, END, ["BOOM", "ZED"])
+    assert res.current_failed == ["BOOM"] and res.historical_unavailable == ["ZED"]
+    assert res.failed == ["BOOM", "ZED"]
+
+
+def _cli_env(clean_env, tmp_path):
+    clean_env.setenv("ARGUS_STORE_DIR", str(tmp_path / "store"))
+    st = Store(tmp_path / "store")
+    st.init_schema()
+    return st
+
+
+def test_cli_exit_0_when_historical_fully_unavailable(clean_env, tmp_path, monkeypatch):
+    """100% of the historical cohort unavailable must not set a non-zero exit.
+
+    Fails if historical unavailability is counted against the exit rule.
+    """
+    _cli_env(clean_env, tmp_path)
+    hist = [f"H{i}" for i in range(100)]
+    result = BootstrapResult(
+        n_symbols=10, n_rows=1, failed=hist, current_written=10, historical_unavailable=hist
+    )
+    monkeypatch.setattr(
+        "argus.commands.ingest_bootstrap.bootstrap_history", lambda *a, **k: result
+    )
+    res = CliRunner().invoke(app, ["ingest", "bootstrap", "--start", "2024-01-02"])
+    assert res.exit_code == 0, res.output
+    assert "current: written=10 skipped=0 failed=0 (100.0%)" in res.output
+    assert "historical: written=0 skipped=0 unavailable=100 (0.0%)" in res.output
+    assert "historical unavailable: " + ",".join(hist) in res.output  # full list
+
+
+def test_cli_exit_1_when_current_under_threshold_even_if_historical_perfect(
+    clean_env, tmp_path, monkeypatch
+):
+    """Current 97/100 exits 1 while the historical cohort is 100% written.
+
+    Fails if the current cohort is ignored by the exit rule.
+    """
+    _cli_env(clean_env, tmp_path)
+    bad = ["C1", "C2", "C3"]
+    result = BootstrapResult(
+        n_symbols=197, n_rows=1, failed=bad, current_written=97, current_failed=bad,
+        historical_written=100,
+    )
+    monkeypatch.setattr(
+        "argus.commands.ingest_bootstrap.bootstrap_history", lambda *a, **k: result
+    )
+    res = CliRunner().invoke(app, ["ingest", "bootstrap", "--start", "2024-01-02"])
+    assert res.exit_code == 1, res.output
+    assert "current: written=97 skipped=0 failed=3 (97.0%)" in res.output
+    assert "historical: written=100 skipped=0 unavailable=0 (100.0%)" in res.output
+    assert "current failed: C1,C2,C3" in res.output
+
+
+def test_cli_end_to_end_cohort_lines_and_exit(clean_env, tmp_path, calls):
+    """Real run: AAA current written, HIST1 historical unavailable -> exit 0, both cohorts named."""
+    st = _cli_env(clean_env, tmp_path)
+    st.upsert("symbols", pl.DataFrame({"symbol": ["AAA"], "active": [True]}), ["symbol"])
+    args = ["ingest", "bootstrap", "--start", "2024-01-02", "--end", "2024-03-25",
+            "--symbols", "AAA,HIST1"]
+    res = CliRunner().invoke(app, args)
+    assert res.exit_code == 0, res.output
+    assert "current: written=1 skipped=0 failed=0 (100.0%)" in res.output
+    assert "historical: written=0 skipped=0 unavailable=1 (0.0%)" in res.output
+    assert "historical unavailable: HIST1" in res.output
+    # re-run: AAA is skipped (a current success), HIST1 retried and still unavailable -> exit 0
+    again = CliRunner().invoke(app, args)
+    assert again.exit_code == 0, again.output
+    assert "current: written=0 skipped=1 failed=0 (100.0%)" in again.output
+
+
+def test_cli_end_to_end_current_failure_exits_1(clean_env, tmp_path, calls):
+    st = _cli_env(clean_env, tmp_path)
+    st.upsert(
+        "symbols",
+        pl.DataFrame({"symbol": ["AAA", "ZZZ", "BBB"], "active": [True, True, False]}),
+        ["symbol"],
+    )
+    res = CliRunner().invoke(
+        app,
+        ["ingest", "bootstrap", "--start", "2024-01-02", "--end", "2024-03-25",
+         "--symbols", "AAA,ZZZ,BBB"],
+    )
+    assert res.exit_code == 1, res.output
+    assert "current: written=1 skipped=0 failed=1 (50.0%)" in res.output
+    assert "historical: written=1 skipped=0 unavailable=0 (100.0%)" in res.output
+    assert "current failed: ZZZ" in res.output
