@@ -38,7 +38,9 @@ def refresh_cmd(
         raise typer.Exit(1) from None
     n_bounded = report.rows_by_source.get(SRC_DERIVED_BOUNDED, 0)
     too_many_bounded = n_bounded > MAX_BOUNDED_ROWS
-    status = "ok" if report.n_missing_group == 0 and not too_many_bounded else "failed"
+    orphans = report.current_members_without_row if report.invariant_enforced else 0
+    healthy = report.n_missing_group == 0 and not too_many_bounded and not orphans
+    status = "ok" if healthy else "failed"
     detail = f"gap route {report.gap_route}; " + ",".join(report.sources_used)
     if report.n_missing_group:
         detail = f"{report.n_missing_group} symbols without industry group; {detail}"
@@ -47,6 +49,8 @@ def refresh_cmd(
     store.log_ingest(as_of, "universe", report.membership_rows, status, detail[:500])
     typer.echo(f"symbols: {report.n_symbols}")
     typer.echo(f"members on {as_of.isoformat()}: {report.n_members_today}")
+    typer.echo(f"current table symbols: {report.n_current_table}")
+    typer.echo(f"current members without row: {report.current_members_without_row}")
     typer.echo(f"missing industry group: {report.n_missing_group}")
     typer.echo(f"membership rows: {report.membership_rows}")
     typer.echo(f"sources: {', '.join(report.sources_used)}")
@@ -60,5 +64,11 @@ def refresh_cmd(
             f"STOP: {n_bounded} {SRC_DERIVED_BOUNDED} rows exceeds {MAX_BOUNDED_ROWS} (AC7)",
             err=True,
         )
-    if report.n_missing_group or too_many_bounded:
+    if orphans:  # refresh() already raises when enforced; this covers a back-dated --date
+        typer.echo(
+            "STOP: current members without a membership row: "
+            + ", ".join(report.current_members_without_row_symbols),
+            err=True,
+        )
+    if report.n_missing_group or too_many_bounded or orphans:
         raise typer.Exit(1)

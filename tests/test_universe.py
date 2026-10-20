@@ -1,5 +1,7 @@
 import json
-from datetime import date
+import re
+import shutil
+from datetime import date, timedelta
 from pathlib import Path
 
 import httpx
@@ -19,9 +21,13 @@ from argus.data.universe import (
     HANSHOF_URL,
     MAX_BOUNDED_ROWS,
     WIKIPEDIA_URL,
+    MembershipInvariantError,
+    Rename,
     build_membership,
     fetch_wikipedia_constituents,
+    is_trading_day,
     load_hanshof_csv,
+    load_renames,
     map_industry_group,
     next_trading_day,
     parse_wikipedia_changes,
@@ -47,6 +53,13 @@ PLACEHOLDER = "unit-test-placeholder"
 def _reset_structlog():
     structlog.reset_defaults()  # another test may have bound structlog to a closed stdout
     yield
+
+
+@pytest.fixture(autouse=True)
+def _pin_today(monkeypatch):
+    # The AMD-0014 invariant is enforced for as_of >= today; pin "today" so the suite does not
+    # depend on the wall clock (the fixtures are a 2026-10-20 snapshot of the live page).
+    monkeypatch.setattr("argus.data.universe._today_utc", lambda: date(2026, 10, 20))
 
 
 def _wiki_client(html: str = WIKI_HTML) -> httpx.Client:
@@ -308,7 +321,10 @@ def test_refresh_is_idempotent_and_honours_date(cli_env):
     first = runner.invoke(app, ["universe", "refresh", "--date", "2025-09-01"])
     second = runner.invoke(app, ["universe", "refresh", "--date", "2025-09-01"])
     assert first.exit_code == 0 and second.exit_code == 0
-    assert first.output == second.output
+    def report_lines(out: str) -> list[str]:  # drop timestamped structlog lines (stdout)
+        return [ln for ln in out.splitlines() if not re.match(r"\d{4}-\d\d-\d\d \d\d:", ln)]
+
+    assert report_lines(first.output) == report_lines(second.output)
     store = Store(cli_env)
     assert store.read("SELECT count(*) AS n FROM membership")["n"][0] == int(
         first.output.split("membership rows: ")[1].split()[0]
@@ -423,7 +439,9 @@ def test_route_b_used_when_changes_table_present_and_fmp_402(cli_env):
     _mock_sources(
         wiki_html=WIKI_HTML.replace("</body>", CHANGES_TABLE + "</body>"), fmp_status=402
     )
-    store, report = _run_refresh(cli_env)
+    # the fixture changes table is partial, so a today-dated run would (correctly) fail the
+    # AMD-0014 invariant; back-date it: this test is about route (b) rows, not completeness
+    store, report = _run_refresh(cli_env, as_of=date(2025, 12, 31))
     assert report.gap_route == "wikipedia-changes"
     assert report.rows_by_source.get("wikipedia-derived-bounded", 0) == 0
     iv = store.read("SELECT * FROM membership WHERE symbol IN ('IBKR','WBA') ORDER BY symbol")
@@ -455,7 +473,9 @@ def test_gap_derivation_when_fmp_402(cli_env):
     h = load_hanshof_csv(HANSHOF_SAMPLE)
     last = set(h["symbols"][-1].to_list())
     cur = set(fetch_wikipedia_constituents(_wiki_client())["symbol"].to_list())
-    assert report.rows_by_source["wikipedia-derived-bounded"] == len(last - cur) == 33
+    mapped_old = {r.old for r in load_renames(CONFIG)}
+    assert len(mapped_old) == 5 and mapped_old <= last - cur  # AMD-0014: renames are not removals
+    assert report.rows_by_source["wikipedia-derived-bounded"] == len(last - cur - mapped_old) == 28
     assert report.rows_by_source["hanshof"] > 500
     # exact additions: every current row with Date added in (H, as_of]
     wiki = fetch_wikipedia_constituents(_wiki_client())
@@ -501,7 +521,7 @@ def test_402_everywhere_exits_zero_and_stays_inside_call_budget(cli_env):
     result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
     assert result.exit_code == 0, result.output
     assert 0 < _fmp_calls() <= 60
-    assert "wikipedia-derived-bounded=33" in result.output
+    assert "wikipedia-derived-bounded=28" in result.output  # 33 less the 5 mapped renames
 
 
 @respx.mock
@@ -520,7 +540,7 @@ def test_fmp_call_count_bounded_when_many_profile_fallbacks(cli_env):
 
 @respx.mock
 def test_bounded_removals_over_limit_is_a_stop(cli_env):
-    n_base = 33
+    n_base = 28  # 33 hanshof-only departures less the 5 mapped renames (AMD-0014)
     # exactly at the limit: allowed
     _mock_sources(fmp_status=402, hanshof_text=_hanshof_with_extra_last_members(
         MAX_BOUNDED_ROWS - n_base))
@@ -548,3 +568,219 @@ def test_other_fmp_errors_still_abort_refresh(cli_env):
     respx.get(BASE_URL + "historical-sp500-constituent").mock(return_value=httpx.Response(500))
     result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
     assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------- AMD-0014 renames
+H = date(2025, 8, 23)  # a Saturday: the last snapshot of a mini hanshof
+AS_OF = date(2025, 12, 31)
+
+
+def _mini_hanshof() -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "date": [date(2024, 1, 2), H],
+            "symbols": [["AAA", "GONE", "OLDX"], ["AAA", "GONE", "OLDX"]],
+        }
+    )
+
+
+def _mini_current() -> pl.DataFrame:
+    # NEWX is OLDX renamed: it carries the company's ORIGINAL `Date added` (before H)
+    return pl.DataFrame(
+        {"symbol": ["AAA", "NEWX"], "date_added": [date(2010, 1, 4), date(2010, 1, 4)]},
+        schema={"symbol": pl.String, "date_added": pl.Date},
+    )
+
+
+def _members_on(df: pl.DataFrame, d: date) -> set[str]:
+    sub = df.filter(
+        (pl.col("start_date") <= d) & (pl.col("end_date").is_null() | (pl.col("end_date") >= d))
+    )
+    return set(sub["symbol"].to_list())
+
+
+def _trading_days(first: date, last: date):
+    d = first
+    while d <= last:
+        if is_trading_day(d):
+            yield d
+        d += timedelta(days=1)
+
+
+def test_rename_preserves_continuity():
+    eff = date(2025, 10, 15)  # a Wednesday
+    df = build_membership(
+        _mini_hanshof(),
+        _mini_current(),
+        None,
+        start=date(2015, 1, 1),
+        as_of=AS_OF,
+        renames=[Rename("OLDX", "NEWX", eff)],
+    )
+    assert _intervals(df, "OLDX") == [(date(2024, 1, 2), date(2025, 10, 14), "rename-mapped")]
+    assert _intervals(df, "NEWX") == [(eff, None, "rename-mapped")]
+    before, day, after = date(2025, 10, 14), eff, date(2025, 10, 16)
+    assert {"OLDX", "NEWX"} & _members_on(df, before) == {"OLDX"}
+    assert {"OLDX", "NEWX"} & _members_on(df, day) == {"NEWX"}
+    assert {"OLDX", "NEWX"} & _members_on(df, after) == {"NEWX"}
+    # no trading day since the company joined where neither ticker is a member, none where both
+    for d in _trading_days(date(2024, 1, 2), AS_OF):
+        assert len({"OLDX", "NEWX"} & _members_on(df, d)) == 1, d
+    # the old ticker did not leave the index: it is not a bounded removal; a true departure is
+    bounded = set(df.filter(pl.col("source") == "wikipedia-derived-bounded")["symbol"].to_list())
+    assert "OLDX" not in bounded and bounded == {"GONE"}
+    assert _intervals(df, "AAA") == [(date(2024, 1, 2), None, "hanshof")]
+    assert df.select(["symbol", "start_date"]).is_duplicated().sum() == 0
+    # the new ticker gets no derived-exact row in addition
+    new_sources = df.filter(pl.col("symbol") == "NEWX")["source"].to_list()
+    assert "wikipedia-derived-exact" not in new_sources
+
+
+def test_rename_unknown_effective_is_bounded_not_added():
+    df = build_membership(
+        _mini_hanshof(),
+        _mini_current(),
+        None,
+        start=date(2015, 1, 1),
+        as_of=AS_OF,
+        renames=[Rename("OLDX", "NEWX", None)],
+    )
+    nxt = next_trading_day(H)
+    assert nxt == date(2025, 8, 25)
+    assert _intervals(df, "OLDX") == [(date(2024, 1, 2), H, "rename-bounded")]
+    assert _intervals(df, "NEWX") == [(nxt, None, "rename-bounded")]
+    # exactly one of the pair is a member on EVERY trading day across H: the union has no hole
+    for d in _trading_days(date(2024, 1, 2), AS_OF):
+        assert len({"OLDX", "NEWX"} & _members_on(df, d)) == 1, d
+    assert {"OLDX", "NEWX"} & _members_on(df, date(2025, 8, 22)) == {"OLDX"}
+    assert {"OLDX", "NEWX"} & _members_on(df, H) == {"OLDX"}
+    assert {"OLDX", "NEWX"} & _members_on(df, nxt) == {"NEWX"}
+    # the rejected "addition" model would leave NEWX without a row before H+1 AND OLDX bounded
+    assert "OLDX" not in set(
+        df.filter(pl.col("source") == "wikipedia-derived-bounded")["symbol"].to_list()
+    )
+
+
+def test_rename_already_covered_by_change_rows_is_not_double_counted():
+    # route (a)/(b): explicit rows already remove OLDX and add NEWX; the map must not touch them
+    changes = pl.DataFrame(
+        {
+            "date": [date(2025, 10, 15), date(2025, 10, 15)],
+            "symbol": ["OLDX", "NEWX"],
+            "action": ["removed", "added"],
+            "reason": ["rename", "rename"],
+        },
+        schema={"date": pl.Date, "symbol": pl.String, "action": pl.String, "reason": pl.String},
+    )
+    df = build_membership(
+        _mini_hanshof(),
+        None,
+        changes,
+        start=date(2015, 1, 1),
+        as_of=AS_OF,
+        renames=[Rename("OLDX", "NEWX", None)],
+        current_symbols={"AAA", "NEWX"},
+    )
+    assert _intervals(df, "OLDX") == [(date(2024, 1, 2), date(2025, 10, 14), "hanshof+fmp")]
+    assert _intervals(df, "NEWX") == [(date(2025, 10, 15), None, "fmp")]
+    assert not {"rename-mapped", "rename-bounded"} & set(df["source"].to_list())
+    # and where the change rows do NOT cover the pair, the map fills it in routes (a)/(b) too
+    none = changes.clear()
+    df2 = build_membership(
+        _mini_hanshof(), None, none, start=date(2015, 1, 1), as_of=AS_OF,
+        renames=[Rename("OLDX", "NEWX", None)], current_symbols={"AAA", "NEWX"},
+    )
+    assert _intervals(df2, "NEWX") == [(date(2025, 8, 25), None, "rename-bounded")]
+
+
+def test_renames_loader_validates(tmp_path):
+    assert load_renames(tmp_path) == []  # absent file = empty map
+    shipped = load_renames(CONFIG)
+    assert [(r.old, r.new, r.effective) for r in shipped] == [
+        ("BK", "BNY", None), ("FI", "FISV", None), ("MMC", "MRSH", None),
+        ("PSKY", "SKYD", None), ("EQR", "VMRK", None),
+    ]
+    f = tmp_path / "ticker_renames.yaml"
+    f.write_text("renames:\n  - {old: AAA, new: BBB, effective: 2025-10-15}\n", encoding="utf-8")
+    assert load_renames(tmp_path) == [Rename("AAA", "BBB", date(2025, 10, 15))]
+    for bad in (
+        "renames:\n  - {old: AAA, new: BBB}\n",  # effective missing
+        "renames:\n  - {old: aaa, new: BBB, effective: null}\n",  # not a canonical symbol
+        "renames:\n  - {old: AAA, new: AAA, effective: null}\n",
+        "renames:\n  - {old: AAA, new: BBB, effective: soon}\n",
+        "renames:\n  - {old: AAA, new: BBB, effective: null}\n"
+        "  - {old: AAA, new: CCC, effective: null}\n",  # old repeated
+        "renames: AAA\n",
+        "- AAA\n",
+    ):
+        f.write_text(bad, encoding="utf-8")
+        with pytest.raises(Exception, match="ticker_renames.yaml"):
+            load_renames(tmp_path)
+
+
+@respx.mock
+def test_no_current_member_without_row(cli_env):
+    _mock_sources(fmp_status=402)  # route (c): the live shape in which renames bite
+    store, report = _run_refresh(cli_env)
+    current = fetch_wikipedia_constituents(_wiki_client())["symbol"].to_list()
+    open_syms = set(
+        store.read("SELECT symbol FROM membership WHERE end_date IS NULL")["symbol"].to_list()
+    )
+    assert not [s for s in current if s not in open_syms]  # every current symbol, an open row
+    assert report.current_members_without_row == 0
+    assert report.current_members_without_row_symbols == []
+    assert report.n_current_table == len(current) == 503 == report.n_members_today
+    assert {"BNY", "FISV", "MRSH", "SKYD", "VMRK"} <= open_syms
+    assert report.rows_by_source["rename-bounded"] == 10  # 5 pairs x (old row + new row)
+    assert "rename-mapped" not in report.rows_by_source
+    # each renamed company is exactly one member on every trading day across H
+    for old, new in (("BK", "BNY"), ("FI", "FISV"), ("MMC", "MRSH"), ("PSKY", "SKYD"),
+                     ("EQR", "VMRK")):
+        # (hanshof itself lists PSKY only from H - its own PARA->PSKY step is outside the map)
+        days = [date(2025, 8, 25), date(2026, 10, 20)]
+        if old != "PSKY":
+            days.append(date(2025, 8, 22))
+        for d in days:
+            members = set(store.members_on(d))
+            assert len({old, new} & members) == 1, (old, new, d)
+        assert old in store.members_on(H) and new not in store.members_on(H)
+
+
+@respx.mock
+def test_missing_rename_map_fails_loudly(cli_env, tmp_path, monkeypatch):
+    # the failure path: drop the map and the five renamed companies have no current row
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    for name in ("gics.yaml", "universe.yaml"):
+        shutil.copy(CONFIG / name, cfg / name)
+    monkeypatch.setenv("ARGUS_CONFIG_DIR", str(cfg))
+    _mock_sources(fmp_status=402)
+    with pytest.raises(MembershipInvariantError) as exc:
+        _run_refresh(cli_env)
+    for sym in ("BNY", "FISV", "MRSH", "SKYD", "VMRK"):
+        assert sym in str(exc.value)
+    result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
+    assert result.exit_code == 1
+    assert "BNY" in result.output and "FISV" in result.output
+    assert "no open membership row" in result.output
+    store = Store(cli_env)
+    assert store.read("SELECT count(*) AS n FROM membership")["n"][0] == 0  # nothing persisted
+    logged = store.read("SELECT status FROM ingest_log WHERE source = ?", ["universe"])
+    assert logged["status"].to_list() == ["failed"]
+    # a back-dated run cannot be validated against today's table: reported, not a failure
+    respx.reset()
+    _mock_sources(fmp_status=402)
+    back = runner.invoke(app, ["universe", "refresh", "--date", "2025-12-31"])
+    assert back.exit_code == 0, back.output
+    assert "current members without row: " in back.output
+
+
+@respx.mock
+def test_cli_prints_invariant_fields(cli_env):
+    _mock_sources(fmp_status=402)
+    result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
+    assert result.exit_code == 0, result.output
+    assert "current table symbols: 503" in result.output
+    assert "current members without row: 0" in result.output
+    assert "members on 2026-10-20: 503" in result.output
+    assert "rename-bounded=10" in result.output

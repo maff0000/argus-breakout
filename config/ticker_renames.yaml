@@ -1,0 +1,21 @@
+# Ticker renames within the S&P 500: old ticker -> current ticker (AMD-0014).
+# A rename is ONE continuous membership under a changed symbol, never an addition.
+#
+# Operator-maintained. A reviewed static map is more trustworthy than inferring
+# identity from `Date added` collisions, and is auditable. Add a pair whenever a
+# current constituent has no membership row because its old ticker sits in the
+# hanshof history (`universe refresh` fails and names such symbols).
+#
+# effective: the first date the NEW ticker trades; YYYY-MM-DD, or null when unknown.
+#   known -> old ticker's interval closes the last trading day before it, the new
+#            opens on it (membership.source = rename-mapped).
+#   null  -> the rename happened after the last hanshof snapshot: the old closes at
+#            that snapshot date and the new opens the next trading day
+#            (membership.source = rename-bounded).
+# All five dates below are null: no free source evidences them. Fill them in when known.
+renames:
+  - {old: BK, new: BNY, effective: null}
+  - {old: FI, new: FISV, effective: null}
+  - {old: MMC, new: MRSH, effective: null}
+  - {old: PSKY, new: SKYD, effective: null}
+  - {old: EQR, new: VMRK, effective: null}

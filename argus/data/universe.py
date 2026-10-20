@@ -47,6 +47,8 @@ SRC_FMP = "fmp"
 SRC_WIKI_CHANGES = "wikipedia-changes"
 SRC_DERIVED_EXACT = "wikipedia-derived-exact"
 SRC_DERIVED_BOUNDED = "wikipedia-derived-bounded"
+SRC_RENAME_MAPPED = "rename-mapped"
+SRC_RENAME_BOUNDED = "rename-bounded"
 ROUTE_FMP = "fmp"
 ROUTE_WIKI_CHANGES = "wikipedia-changes"
 ROUTE_DERIVED = "wikipedia-derived"
@@ -390,6 +392,111 @@ def load_hanshof_csv(
     )
 
 
+# ---------------------------------------------------------------------- renames
+@dataclass(frozen=True)
+class Rename:
+    """A mapped ticker rename (AMD-0014): one continuous membership under a changed symbol."""
+
+    old: str
+    new: str
+    effective: date | None
+
+
+class MembershipInvariantError(ValueError):
+    """The current-membership invariant failed (AMD-0014 2B): a failure, never a statistic."""
+
+
+def _parse_renames(data: dict) -> list[Rename]:
+    entries = data.get("renames")
+    if entries is None:
+        return []
+    if not isinstance(entries, list):
+        raise ConfigError("invalid ticker_renames.yaml: 'renames' must be a list")
+    out: list[Rename] = []
+    seen_old: set[str] = set()
+    seen_new: set[str] = set()
+    for i, entry in enumerate(entries):
+        where = f"ticker_renames.yaml entry {i}"
+        if not isinstance(entry, dict) or set(entry) != {"old", "new", "effective"}:
+            raise ConfigError(f"invalid {where}: need exactly the keys old, new, effective")
+        old, new, eff = entry["old"], entry["new"], entry["effective"]
+        for label, sym in (("old", old), ("new", new)):
+            if not isinstance(sym, str) or not is_valid(sym):
+                raise ConfigError(f"invalid {where}: bad {label} symbol {sym!r}")
+        if old == new:
+            raise ConfigError(f"invalid {where}: old and new are both {old!r}")
+        if old in seen_old or new in seen_new or old in seen_new or new in seen_old:
+            raise ConfigError(f"invalid {where}: {old!r}/{new!r} repeats another entry")
+        seen_old.add(old)
+        seen_new.add(new)
+        if eff is None:
+            effective = None
+        elif isinstance(eff, date) and not isinstance(eff, datetime):
+            effective = eff
+        elif isinstance(eff, str):
+            try:
+                effective = date.fromisoformat(eff)
+            except ValueError:
+                raise ConfigError(f"invalid {where}: effective {eff!r} is not YYYY-MM-DD") from None
+        else:
+            raise ConfigError(f"invalid {where}: effective must be YYYY-MM-DD or null")
+        out.append(Rename(old, new, effective))
+    return out
+
+
+def load_renames(config_dir: Path) -> list[Rename]:
+    """The operator-maintained rename map; an absent file is an empty map."""
+    path = Path(config_dir) / "ticker_renames.yaml"
+    if not path.is_file():
+        return []
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if data is None:
+        return []
+    if not isinstance(data, dict):
+        raise ConfigError("invalid config file: ticker_renames.yaml")
+    return _parse_renames(data)
+
+
+def _apply_renames(
+    open_: dict[str, tuple[date, str]],
+    closed: list[tuple[str, date, date | None, str]],
+    renames: list[Rename],
+    current: set[str],
+    last_hanshof: date,
+    as_of: date | None,
+) -> None:
+    """Turn each applicable mapped pair into one continuous membership (AMD-0014 2C).
+
+    Applies only when the NEW ticker is a current member with no open interval and the OLD
+    ticker is open at the gap; a pair already covered by explicit change rows is untouched.
+    """
+    for r in renames:
+        if r.new not in current or r.new in open_ or r.old not in open_:
+            continue
+        if r.effective is None:
+            old_end, src = last_hanshof, SRC_RENAME_BOUNDED
+            new_start = next_trading_day(last_hanshof)
+        elif r.effective > last_hanshof:
+            old_end, src = previous_trading_day(r.effective), SRC_RENAME_MAPPED
+            new_start = r.effective
+        else:
+            log.warning("rename_not_after_hanshof_ignored", old=r.old, new=r.new)
+            continue
+        if as_of is not None and new_start > as_of:
+            continue
+        began, _ = open_.pop(r.old)
+        closed.append((r.old, began, old_end, src))
+        open_[r.new] = (new_start, src)
+        log.info(
+            "rename_applied",
+            old=r.old,
+            new=r.new,
+            source=src,
+            old_closes=old_end.isoformat(),
+            new_opens=new_start.isoformat(),
+        )
+
+
 # ---------------------------------------------------------------------- membership
 def build_membership(
     hanshof: pl.DataFrame,
@@ -398,6 +505,8 @@ def build_membership(
     start: date = MEMBERSHIP_START,
     as_of: date | None = None,
     changes_source: str = SRC_FMP,
+    renames: list[Rename] | None = None,
+    current_symbols: set[str] | None = None,
 ) -> pl.DataFrame:
     """Point-in-time intervals [symbol, start_date, end_date, source] (AMD-0013 2C).
 
@@ -410,6 +519,12 @@ def build_membership(
     A symbol removed on D is not a member on D: `end_date` is the last trading day before
     D (closed interval, AMD-0011). Contiguous or overlapping intervals of one symbol are
     merged; `end_date` NULL means current.
+
+    `renames` (AMD-0014) map an OLD ticker in hanshof@H to a NEW current ticker: the pair is
+    one continuous membership. Known `effective`: old ends the trading day before it, new
+    starts on it ('rename-mapped'); unknown: old ends at H, new starts the next trading day
+    ('rename-bounded'). A mapped old ticker is never a bounded removal. `current_symbols`
+    (default: `current_table`) says which NEW tickers are in the index today.
     """
     snapshots = sorted(
         ((r["date"], set(r["symbols"])) for r in hanshof.iter_rows(named=True)),
@@ -431,6 +546,11 @@ def build_membership(
             closed.append((sym, began, previous_trading_day(d), src))
         prev = members
 
+    renames = renames or []
+    current_set = set(current_symbols) if current_symbols is not None else (
+        set(current_table["symbol"].to_list()) if current_table is not None else set()
+    )
+
     if fmp_changes is not None:
         changes = fmp_changes.filter(pl.col("date") > last_hanshof).sort(["date", "action"])
         for rec in changes.iter_rows(named=True):
@@ -445,8 +565,10 @@ def build_membership(
                     closed.append((sym, began, previous_trading_day(d), src))
             else:
                 raise ValueError(f"unknown change action: {action!r}")
+        _apply_renames(open_, closed, renames, current_set, last_hanshof, as_of)
     elif current_table is not None and (as_of is None or as_of > last_hanshof):
         current = set(current_table["symbol"].to_list())
+        _apply_renames(open_, closed, renames, current, last_hanshof, as_of)
         for sym in sorted(set(open_) - current):  # left the index somewhere in (H, today]
             began, _ = open_.pop(sym)
             closed.append((sym, began, last_hanshof, SRC_DERIVED_BOUNDED))
@@ -527,6 +649,15 @@ class UniverseReport:
     sources_used: list[str]
     gap_route: str = ROUTE_NONE
     rows_by_source: dict[str, int] = field(default_factory=dict)
+    n_current_table: int = 0
+    # AMD-0014 2B: current-table symbols with no open (end_date IS NULL) membership interval
+    current_members_without_row: int = 0
+    current_members_without_row_symbols: list[str] = field(default_factory=list)
+    invariant_enforced: bool = True  # False only for a back-dated --date (see refresh())
+
+
+def _today_utc() -> date:
+    return datetime.now(UTC).date()
 
 
 def _resolve_current(
@@ -560,11 +691,12 @@ def refresh(
 ) -> UniverseReport:
     """Populate `symbols` and rebuild `membership`; returns a UniverseReport."""
     settings.require("fmp_api_key")
-    as_of = as_of or datetime.now(UTC).date()
+    as_of = as_of or _today_utc()
     gics = _load_yaml(settings.argus_config_dir, "gics.yaml")
     universe_cfg = _load_yaml(settings.argus_config_dir, "universe.yaml")
     etfs = configured_etfs(universe_cfg)
     fmp = FMPClient(settings.fmp_api_key, settings.fmp_daily_call_budget, store, http=http)
+    renames = load_renames(settings.argus_config_dir)
     sources: list[str] = []
 
     # --- current constituents with GICS classification
@@ -628,10 +760,37 @@ def refresh(
         start=MEMBERSHIP_START,
         as_of=as_of,
         changes_source=changes_source,
+        renames=renames,
+        current_symbols={r["symbol"] for r in current},
     )
     bad = [s for s in membership["symbol"].unique().to_list() if not is_valid(s)]
     if bad:
         raise ValueError(f"non-canonical membership symbols: {bad[:5]}")
+
+    # --- AMD-0014 2B: every current-table symbol has exactly one open interval. Checked before
+    # anything is written. The current table describes TODAY, so it is enforced when as_of is
+    # today or later; a back-dated --date cannot be validated against it (reported only).
+    current_syms = [r["symbol"] for r in current]
+    with_open = set(membership.filter(pl.col("end_date").is_null())["symbol"].to_list())
+    without_row = [s for s in current_syms if s not in with_open]
+    n_current_table = len(current_syms)
+    enforced = as_of >= _today_utc()
+    if enforced:
+        if without_row:
+            raise MembershipInvariantError(
+                f"{len(without_row)} current index members have no open membership row: "
+                f"{', '.join(without_row)} (a ticker rename missing from "
+                "ticker_renames.yaml? AMD-0014)"
+            )
+        n_open_on = membership.filter(
+            (pl.col("start_date") <= as_of)
+            & (pl.col("end_date").is_null() | (pl.col("end_date") >= as_of))
+        )["symbol"].n_unique()
+        if n_open_on != n_current_table:
+            raise MembershipInvariantError(
+                f"membership on {as_of.isoformat()} has {n_open_on} members but the current "
+                f"table has {n_current_table} symbols"
+            )
 
     # --- industry group for every current member (no silent defaults)
     valid_sectors = set(gics["sectors"])
@@ -706,6 +865,11 @@ def refresh(
         for k, v in membership.group_by("source").len().sort("source").iter_rows()
     }
     n_members_today = len(store.members_on(as_of))
+    if enforced and n_members_today != n_current_table:
+        raise MembershipInvariantError(
+            f"members_on({as_of.isoformat()}) returned {n_members_today} but the current table "
+            f"has {n_current_table} symbols (AMD-0014)"
+        )
     n_symbols = store.read("SELECT count(*) AS n FROM symbols")["n"][0]
     return UniverseReport(
         n_symbols=int(n_symbols),
@@ -715,6 +879,10 @@ def refresh(
         sources_used=sources,
         gap_route=gap_route,
         rows_by_source=rows_by_source,
+        n_current_table=n_current_table,
+        current_members_without_row=len(without_row),
+        current_members_without_row_symbols=without_row,
+        invariant_enforced=enforced,
     )
 
 
