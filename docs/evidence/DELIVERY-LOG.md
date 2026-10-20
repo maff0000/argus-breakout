@@ -38,3 +38,6 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-19T23:19Z  WO-0002  Merged  PR #3 merge commit (no squash); CI green
 2026-10-19T23:19Z  WO-0002  Closed  
 2026-10-20T07:39Z  WO-0011  In Progress  base 19d9ca0ee0a441a1f74cd9030e18f2f94fecf517 (AMD-0012/0013 schema vehicle); branch wo/0011-actions-schema-correction
+2026-10-20T07:45Z  WO-0011  Implemented  head 647e1aa930c385f754593ef38b03668514eca53c (Implementer diff reviewed and committed by DC; mechanicals green on host)
+2026-10-20T07:45Z  WO-0011  Audited GREEN  audited sha 647e1aa930c385f754593ef38b03668514eca53c; evidence docs/evidence/WO-0011/
+2026-10-20T07:45Z  WO-0011  PR Open  branch wo/0011-actions-schema-correction; awaiting ARCHITECT ACCEPTANCE
