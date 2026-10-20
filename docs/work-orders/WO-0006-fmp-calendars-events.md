@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | In Progress |
+| **Status** | Closed |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.7 (`events refresh`) ; `DESIGN.md` §3.1, §3.2 (`events`) ; ADR-0003 |
 | **Applicable Amendments** | AMD-0002 |
 | **Base SHA** | 46086e6 |
