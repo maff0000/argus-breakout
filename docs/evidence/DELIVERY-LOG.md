@@ -45,3 +45,5 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-20T07:46Z  WO-0011  Accepted  delegated under AMD-0013 s3; audit GREEN, ACs filed
 2026-10-20T07:46Z  WO-0011  Merged  PR #4
 2026-10-20T07:46Z  WO-0011  Closed  evidence docs/evidence/WO-0011/
+2026-10-20T11:36Z  WO-0004  Audited GREEN  audited sha db714d9 (AMD-0012 delta); evidence docs/evidence/WO-0004/
+2026-10-20T11:36Z  WO-0004  PR Open  branch wo/0004-polygon-provider; AC2 backfill rejected 210 historical weekdays (historical members lack symbols rows); awaiting ARCHITECT RULING
