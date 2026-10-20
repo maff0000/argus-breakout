@@ -15,3 +15,4 @@ Approved changes to PIDs, one file per amendment (`AMD-NNNN-<slug>.md`), per `do
 - [AMD-0011](AMD-0011-membership-interval-and-consequential-tests.md) — `membership.end_date` is inclusive; consequential test updates; WO-0002 delta (Applied)
 - [AMD-0012](AMD-0012-split-adjustments-table.md) — Split `adjustments` into `splits` and `dividends`; ratify the bootstrap exit threshold (Applied)
 - [AMD-0013](AMD-0013-fmp-tier-reality-and-wo0011-vehicle.md) — FMP tier reality: membership without paid constituent endpoints; WO-0011 as the schema vehicle (Applied)
+- [AMD-0014](AMD-0014-ticker-renames-and-current-membership-invariant.md) — Current-membership invariant; ticker renames are continuity, not additions (Applied)
