@@ -76,6 +76,55 @@ def test_missing_group_rule():
     assert not _run(_bars(), groups=absent).ok
 
 
+HIST = [f"H{i:03d}" for i in range(4)]  # historical-only members (delisted), no bars today
+
+
+def _hist_run(groups, current, bars=None):
+    members = MEMBERS + HIST
+    prior = pl.DataFrame({"symbol": members, "close": [100.0] * len(members)})
+    bars = bars if bars is not None else _bars()
+    return validate_day(bars, members, prior, set(), groups, current_members=current)
+
+
+def _hist_groups(hist_group=None, missing=()):
+    syms = MEMBERS + HIST
+    return pl.DataFrame(
+        {
+            "symbol": syms,
+            "gics_industry_group": [
+                hist_group if s in HIST else (None if s in missing else "Software") for s in syms
+            ],
+        }
+    )
+
+
+def test_historical_unclassified_member_never_rejects():
+    r = _hist_run(_hist_groups(), current=MEMBERS)
+    assert r.ok and r.reasons == [] and r.n_unclassified_members == len(HIST)
+    # historical members that DO have a group are not counted
+    assert _hist_run(_hist_groups("Software"), current=MEMBERS).n_unclassified_members == 0
+
+
+def test_current_member_without_group_still_rejects_amid_historical():
+    r = _hist_run(_hist_groups(missing={"M010"}), current=MEMBERS)
+    assert not r.ok and any("current member" in x and "industry group" in x for x in r.reasons)
+    assert r.n_unclassified_members == len(HIST)
+
+
+def test_current_members_default_is_strict():
+    # without current_members every member is current: historical-only gaps reject
+    members = MEMBERS + HIST
+    prior = pl.DataFrame({"symbol": members, "close": [100.0] * len(members)})
+    r = validate_day(_bars(), members, prior, set(), _hist_groups())
+    assert not r.ok and r.n_unclassified_members == 0
+
+
+def test_coverage_gate_unchanged_with_current_members():
+    # 90 of 104 members have bars (86.5%) -> rejected even though classification is fine
+    r = _hist_run(_hist_groups("Software"), current=MEMBERS, bars=_bars(present=90))
+    assert not r.ok and any("coverage" in x for x in r.reasons)
+
+
 def test_no_members_rejected():
     r = validate_day(_bars(), [], _prior(), set(), _groups())
     assert not r.ok

@@ -64,7 +64,21 @@ def ingest_polygon_day(store: Store, client: PolygonClient, d: date) -> IngestRe
                 [d],
             )["symbol"].to_list()
         )
-        result = validate_day(bars, members, _prior_close(store, d), splits_today, sym)
+        # "Current" = has an open membership interval (end_date IS NULL); only these must be
+        # classified (AMD-0016 2C). Historical-only members are counted, never rejecting.
+        open_symbols = set(
+            store.read("SELECT DISTINCT symbol FROM membership WHERE end_date IS NULL")[
+                "symbol"
+            ].to_list()
+        )
+        result = validate_day(
+            bars,
+            members,
+            _prior_close(store, d),
+            splits_today,
+            sym,
+            current_members=open_symbols,
+        )
         if not result.ok:
             return _finish(store, d, IngestResult(0, "rejected", "; ".join(result.reasons)))
         written = store.write_bars_raw(
@@ -74,7 +88,8 @@ def ingest_polygon_day(store: Store, client: PolygonClient, d: date) -> IngestRe
         )
         detail = (
             f"members={len(members)} coverage={result.coverage:.4f} "
-            f"dropped_tickers={client.last_dropped}"
+            f"dropped_tickers={client.last_dropped} "
+            f"unclassified={result.n_unclassified_members}"
         )
         return _finish(store, d, IngestResult(written, "ok", detail))
     except Exception as exc:  # noqa: BLE001 - recorded as failed in ingest_log

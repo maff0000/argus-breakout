@@ -137,6 +137,64 @@ def test_missing_group_member_rejected_not_written(store, client):
     assert store.read_bars_raw(None, D, D, None).is_empty()
 
 
+def _add_historical(store, n=10, group=None):
+    """Delisted members: closed interval covering D, in `symbols` inactive, no bars today."""
+    hist = [f"HX{i}" for i in range(n)]
+    store.upsert(
+        "symbols",
+        pl.DataFrame({"symbol": hist, "gics_industry_group": [group] * n, "active": [False] * n}),
+        ["symbol"],
+    )
+    store.upsert(
+        "membership",
+        pl.DataFrame(
+            {
+                "symbol": hist,
+                "start_date": [date(2015, 1, 1)] * n,
+                "end_date": [date(2026, 12, 31)] * n,
+                "source": ["test"] * n,
+            }
+        ),
+        ["symbol", "start_date"],
+    )
+    return hist
+
+
+@respx.mock
+def test_historical_unclassified_members_day_stored(store, client):
+    _add_historical(store, 10)
+    assert len(store.members_on(D)) == len(MEMBERS) + 10
+    _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
+    res = ingest_polygon_day(store, client, D)
+    assert res.status == "ok" and res.rows == len(MEMBERS) + len(ETFS)
+    assert "unclassified=10" in res.detail
+    row = _log(store, D).row(0, named=True)
+    assert row["status"] == "ok" and "unclassified=10" in row["detail"]
+    assert store.read_bars_raw(None, D, D, "polygon").height == res.rows
+
+
+@respx.mock
+def test_current_member_without_group_rejects_amid_historical(store, client):
+    _add_historical(store, 10)
+    store.upsert(
+        "symbols",
+        pl.DataFrame({"symbol": ["MAA"], "gics_industry_group": [None], "active": [True]}),
+        ["symbol"],
+    )
+    _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
+    res = ingest_polygon_day(store, client, D)
+    assert res.status == "rejected" and "current member" in res.detail
+    assert store.read_bars_raw(None, D, D, None).is_empty()
+
+
+@respx.mock
+def test_coverage_gate_still_rejects_with_historical_members(store, client):
+    _add_historical(store, 10)
+    _grouped_route(lambda req: httpx.Response(200, json=_truncated(400)))
+    res = ingest_polygon_day(store, client, D)
+    assert res.status == "rejected" and "coverage" in res.detail
+
+
 @respx.mock
 def test_holiday_logged(store, client):
     _grouped_route(lambda req: httpx.Response(200, json={"status": "OK", "resultsCount": 0}))

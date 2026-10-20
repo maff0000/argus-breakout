@@ -1,5 +1,6 @@
 """Nightly day validation (DESIGN 3.3). Pure: never mutates its inputs."""
 
+from collections.abc import Collection
 from dataclasses import dataclass, field
 
 import polars as pl
@@ -16,6 +17,7 @@ class ValidationResult:
     coverage: float = 0.0
     n_zero_vol: int = 0
     n_jump: int = 0
+    n_unclassified_members: int = 0  # historical-only members without a group (never rejects)
 
 
 def validate_day(
@@ -24,11 +26,16 @@ def validate_day(
     prior_close: pl.DataFrame,
     splits_today: set[str],
     groups: pl.DataFrame,
+    current_members: Collection[str] | None = None,
 ) -> ValidationResult:
     """Apply the four DESIGN 3.3 rules.
 
     bars: symbol, close, volume (one row per symbol). prior_close: symbol, close.
     groups: symbol, gics_industry_group.
+    current_members: the members that are CURRENT, i.e. have an open membership interval
+    (end_date IS NULL). Only these are subject to the classification check (AMD-0016 2C); a
+    historical-only member without a group is counted in n_unclassified_members and never
+    rejects. None (default) treats every member as current (the strict, pre-AMD-0016 check).
     """
     reasons: list[str] = []
     member_set = set(members)
@@ -64,9 +71,11 @@ def validate_day(
             & (pl.col("gics_industry_group").str.strip_chars() != "")
         )["symbol"].to_list()
     )
-    missing = sorted(member_set - grouped)
+    current_set = member_set if current_members is None else member_set & set(current_members)
+    missing = sorted(current_set - grouped)
     if missing:
         sample = ", ".join(missing[:5])
-        reasons.append(f"{len(missing)} member(s) lack an industry group (e.g. {sample})")
+        reasons.append(f"{len(missing)} current member(s) lack an industry group (e.g. {sample})")
+    n_unclassified = len((member_set - current_set) - grouped)
 
-    return ValidationResult(not reasons, reasons, coverage, n_zero, n_jump)
+    return ValidationResult(not reasons, reasons, coverage, n_zero, n_jump, n_unclassified)
