@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.6, §8.7 (`ingest polygon`, `ingest polygon-actions`) ; `DESIGN.md` §3.1, §3.3 ; ADR-0003 |
-| **Applicable Amendments** | AMD-0002, AMD-0012 |
+| **Applicable Amendments** | AMD-0002, AMD-0012, AMD-0016 |
 | **Base SHA** | main at Closure of WO-0002 |
 | **Branch** | `wo/0004-polygon-provider` |
 | **Depends on** | WO-0002 |
@@ -30,8 +30,10 @@ argus/data/providers/polygon.py      create  class PolygonClient(api_key: Secret
                                                429 → wait per Retry-After (default 60 s) and retry up to 3; other 5xx → tenacity 3x exponential
 argus/data/validate.py               create  validate_day(bars: pl.DataFrame, members: list[str], prior_close: pl.DataFrame, splits_today: set[str],
                                                groups: pl.DataFrame) -> ValidationResult(ok: bool, reasons: list[str], coverage: float, n_zero_vol: int, n_jump: int)
-                                               rules exactly DESIGN §3.3: coverage ≥ 0.95; no |close/prior_close − 1| > 0.25 without a split; zero-volume ≤ 2%;
-                                               every member has an industry group
+                                               rules exactly DESIGN §3.3: coverage ≥ 0.95; no |close/prior_close − 1| > 0.25 without a split;
+                                               zero-volume ≤ 2%; the classification check applies to CURRENT members only — a
+                                               historical-only member without an industry group never rejects a day; return
+                                               n_unclassified_members and store the day (AMD-0016 §2C)
 argus/data/ingest_polygon.py         create  ingest_polygon_day(store, client, d) -> IngestResult(rows, status{'ok','rejected','failed'}, detail)
                                                (filters grouped_daily to symbols ∪ ETFs in `symbols`; runs validate_day; writes bars_raw only when ok;
                                                always writes ingest_log)
@@ -80,8 +82,8 @@ out of `bars_raw` entirely.
 
 ## 6. Acceptance criteria
 - **AC1** — `argus ingest polygon --date <last trading day>` on the host writes ≥ 95% of members to `bars_raw` with `source='polygon'`, `basis='split'` (operator check with counts).
-- **AC2** — `argus ingest polygon --backfill <2 years ago> <today>` completes within rate limits and is resumable; `ingest_log` shows one row per weekday with status ok/holiday/rejected (operator check: summary counts; wall time).
-- **AC3** — `argus ingest polygon-actions --since 2024-01-01` populates `splits` and `dividends` for members (operator check: counts per table; at least one known 2026 split present; and a symbol with a same-date split and dividend retains both rows) (AMD-0012).
+- **AC2** — `argus ingest polygon --backfill <2 years ago> <today>` completes within rate limits and is resumable; `ingest_log` shows one row per weekday with status ok/holiday/rejected, and **rejections are confined to days with a genuine data-quality failure** — a historical-only member lacking an industry group must not reject a day (AMD-0016 §2C). Operator check: summary counts, wall time, and the reason for every rejected day.
+- **AC3** — `argus ingest polygon-actions --since 2024-01-01` populates `splits` and `dividends` for members (operator check: counts per table; at least one known 2026 split present). The same-date split-and-dividend retention case is satisfied by the unit tests plus WO-0005's yfinance pairs where Polygon's window contains no such pair — the criterion is that the system retains both rows, not that this provider exhibits one (AMD-0012, ratified AMD-0016 §2E).
 - **AC4** — All validation rules enforced (tests in §5).
 - **AC5** — API key appears nowhere in logs or errors (test_key_not_leaked; Auditor grep of host logs sample).
 
