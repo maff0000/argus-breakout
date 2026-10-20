@@ -139,3 +139,40 @@ def test_log_ingest(store):
     store.log_ingest(date(2024, 1, 2), "fixture", 90, "ok")
     out = store.read("SELECT source, rows, status, detail FROM ingest_log")
     assert out.rows() == [("fixture", 90, "ok", "")]
+
+
+def test_read_splits_and_dividends(store):
+    keys = ["symbol", "date", "source"]
+    splits = pl.DataFrame(
+        {
+            "symbol": ["AAA", "AAA", "BBB"],
+            "date": [date(2024, 1, 5), date(2024, 3, 5), date(2024, 1, 5)],
+            "ratio": [2.0, 3.0, 4.0],
+            "source": ["polygon", "polygon", "yfinance"],
+        }
+    )
+    divs = pl.DataFrame(
+        {
+            "symbol": ["AAA", "BBB", "BBB"],
+            "date": [date(2024, 1, 5), date(2024, 1, 5), date(2024, 6, 5)],
+            "cash_amount": [0.1, 0.2, 0.3],
+            "source": ["polygon", "yfinance", "yfinance"],
+        }
+    )
+    store.upsert("splits", splits, keys)
+    store.upsert("dividends", divs, keys)
+    a, b = date(2024, 1, 1), date(2024, 2, 1)
+    s_all = store.read_splits(None, a, date(2024, 12, 31))
+    assert s_all.height == 3
+    assert set(s_all.columns) == {"symbol", "date", "ratio", "source"}
+    s_aaa = store.read_splits(["AAA"], a, b)
+    assert s_aaa.height == 1
+    assert s_aaa["ratio"].to_list() == [2.0]
+    d_all = store.read_dividends(None, a, date(2024, 12, 31))
+    assert d_all.height == 3
+    assert set(d_all.columns) == {"symbol", "date", "cash_amount", "source"}
+    assert store.read_dividends(["BBB"], a, b).height == 1
+    with pytest.raises(ValueError):
+        store.read_splits(["AAA' OR '1'='1"], a, b)
+    with pytest.raises(ValueError):
+        store.read_dividends(["bad symbol"], a, b)

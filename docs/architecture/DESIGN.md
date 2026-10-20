@@ -98,7 +98,8 @@ ADR-0003 (data sources), ADR-0004 (model gateway), ADR-0005
 | Polygon `GET /v2/aggs/grouped/locale/us/market/stocks/{date}?adjusted=true` | primary nightly OHLCV, all US tickers | 1 call per trading day; ≈500 calls for the 2-year backfill | 5 calls/min; 2 years; EOD delayed |
 | Bootstrap (yfinance or Stooq) | one-off 10+ year adjusted bars for universe + ETFs | once | unofficial; validated before use |
 | IBKR paper gateway (`ib_async`) | reconciliation sample (20 symbols/night, rotating), corporate-action truth, IV30 for ETFs/index | nightly | ≈60 historical requests / 10 min |
-| FMP Basic | `historical-sp500-constituent`, `sp500-constituent`, `profile` (GICS sector + industry group), `earnings-calendar`, `dividends-calendar` | weekly constituents; daily calendars | 250 calls/day |
+| FMP Basic | `profile` (GICS sector + industry group, fallback only), `earnings-calendar`, `dividends-calendar`, `splits-calendar` | daily calendars | 250 calls/day; the constituent endpoints are **402 on this plan** — AMD-0013 |
+| Public constituents table + `hanshof` CSV | current members with `GICS Sector`, `GICS Sub-Industry`, `Date added`; membership history to 2025-08-23, with a documented derivation for the gap | weekly | no key; see AMD-0013 §2C for the gap routing and the `membership.source` precision values |
 | `hanshof/sp500_constituents` CSV (MIT) | cross-check of membership 1996→ | monthly | — |
 
 ### 3.2 Schema (DuckDB catalog; large tables are Parquet-backed)
@@ -112,7 +113,12 @@ membership     (symbol TEXT, start_date DATE, end_date DATE NULL, source TEXT)
 bars_raw       (symbol TEXT, date DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,
                 volume DOUBLE, source TEXT, basis TEXT {'unadjusted','split','split_div'},
                 ingested_at TIMESTAMP)                                         -- as received, with its adjustment basis
-adjustments    (symbol TEXT, date DATE, split_ratio DOUBLE NULL, cash_dividend DOUBLE NULL, source TEXT)
+splits         (symbol TEXT, date DATE, ratio DOUBLE NOT NULL, source TEXT)
+                -- PK (symbol, date, source). date = execution/effective date. ratio = to/from (2.0 for a 2:1).
+dividends      (symbol TEXT, date DATE, cash_amount DOUBLE NOT NULL, source TEXT)
+                -- PK (symbol, date, source). date = ex-dividend date.
+                -- Two tables, not one nullable-measure table: a split and a dividend on the same
+                -- (symbol, date) must both survive, from each source independently (AMD-0012).
 bars           (symbol TEXT, date DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,
                 volume DOUBLE, adj_close DOUBLE, adj_version INT)
                 -- OHLCV split-adjusted; adj_close additionally dividend-adjusted; adj_version increments
@@ -144,7 +150,7 @@ schema_version (version INT, applied_at TIMESTAMP)
 
 ### 3.3 Rules
 - Store bars as received (`bars_raw`, tagged with the source's adjustment
-  `basis`) and corporate actions (`adjustments`) separately; `bars` is
+  `basis`) and corporate actions (`splits`, `dividends`) separately; `bars` is
   materialised from them by `argus/data/adjust.py`. Free sources deliver
   split-adjusted history, so the canonical basis of `bars` OHLCV is
   **split-adjusted**, with `adj_close` additionally dividend-adjusted
@@ -161,12 +167,18 @@ schema_version (version INT, applied_at TIMESTAMP)
   `BRK/B`) are mapped in `argus/data/tickers.py` at every boundary.
 - Nightly validation (`argus/data/validate.py`): a day is **rejected** (not
   published to `bars`) if < 95% of active members have a bar; if any close
-  moves > 25% vs prior close with no split in `adjustments`; if volume is
+  moves > 25% vs prior close with no split in `splits`; if volume is
   zero for > 2% of members; if any member lacks `gics_industry_group`.
   Rejection is logged to `ingest_log` and surfaced in the report.
 - Reconciliation: 20 rotating members per night vs IBKR `ADJUSTED_LAST`
   daily bars; tolerance 0.1% on close, 10% on volume; breaches written to
   `reconcile_log` and surfaced.
+- Corporate actions are stored **per source** and never overwritten across
+  sources: PK `(symbol, date, source)` on both `splits` and `dividends`
+  (AMD-0012). WO-0007 resolves duplicates by the same precedence as bars —
+  Polygon over yfinance — and records in `MaterialiseReport.warnings` any
+  `(symbol, date)` where the sources disagree on a split ratio by more than
+  0.1% or on a dividend by more than one cent.
 - Membership intervals are **closed on both ends** (AMD-0011):
   `members_on(d)` is `start_date <= d AND (end_date IS NULL OR d <= end_date)`.
   Re-added symbols get a second interval; intervals for one symbol never
