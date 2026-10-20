@@ -195,6 +195,9 @@ path relative to the package or found by walking parent directories
 (ADR-0008, AMD-0004).
 - `config/universe.yaml`: `benchmarks: [SPY, RSP]`, `sector_etfs: {...}`,
   `ratio_pairs: [[SMH,SPY], ...]`, `overlay_watchlist: []`.
+- `config/ticker_renames.yaml`: `renames: [{old, new, effective|null}]` —
+  operator-maintained map keeping membership continuous across a symbol
+  change (AMD-0014).
 - `config/gics.yaml`: `sectors: [11 names]`, `industry_groups: {name: sector}`
   (25), `sub_industry_to_group: {sub_industry_name: industry_group}` (163).
   Authored by the Implementer of WO-0003 from the public GICS structure; the
