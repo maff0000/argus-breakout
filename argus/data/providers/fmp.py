@@ -29,8 +29,13 @@ BUDGET_SOURCE = "fmp-budget"
 _CALLS_PER_SECOND = 4
 _ATTEMPTS = 3
 _TIMEOUT = 30.0
+_UNAVAILABLE_STATUSES = (402, 403)
 
 log = structlog.get_logger()
+
+
+class ProviderUnavailable(ProviderError):
+    """The plan does not serve this endpoint (HTTP 402/403) - not a failure (AMD-0013)."""
 
 
 class _Retryable(Exception):  # noqa: N818 - internal control-flow signal
@@ -100,6 +105,9 @@ class FMPClient:
         status = resp.status_code
         if status == 429 or status >= 500:
             raise _Retryable(f"status {status}")
+        if status in _UNAVAILABLE_STATUSES:
+            log.warning("fmp_unavailable", path=path, status=status)
+            raise ProviderUnavailable(f"fmp {path} unavailable on this plan (status {status})")
         if status >= 400:
             raise ProviderError(f"fmp {path} failed with status {status}")
         try:

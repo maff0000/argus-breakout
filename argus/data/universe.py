@@ -7,7 +7,8 @@ date D has `end_date` = the last exchange trading day before D.
 
 import csv
 import io
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from functools import cache
 from html.parser import HTMLParser
@@ -19,7 +20,7 @@ import structlog
 import yaml
 
 from argus.data.providers.base import ProviderError
-from argus.data.providers.fmp import FMPClient
+from argus.data.providers.fmp import FMPClient, ProviderUnavailable
 from argus.data.store import Store
 from argus.data.tickers import is_valid, normalize
 from argus.settings import ConfigError, Settings
@@ -39,6 +40,17 @@ MEMBERSHIP_START = date(2015, 1, 1)
 # 1 (historical) + 1 (current) + at most this many profile lookups.
 MAX_PROFILE_FALLBACKS = 50
 ETF_LABEL = "ETF"
+# AC7 (AMD-0013): more bounded-removal rows than this is a malfunction, not turnover.
+MAX_BOUNDED_ROWS = 40
+SRC_HANSHOF = "hanshof"
+SRC_FMP = "fmp"
+SRC_WIKI_CHANGES = "wikipedia-changes"
+SRC_DERIVED_EXACT = "wikipedia-derived-exact"
+SRC_DERIVED_BOUNDED = "wikipedia-derived-bounded"
+ROUTE_FMP = "fmp"
+ROUTE_WIKI_CHANGES = "wikipedia-changes"
+ROUTE_DERIVED = "wikipedia-derived"
+ROUTE_NONE = "none"
 
 log = structlog.get_logger()
 
@@ -168,6 +180,114 @@ class _ConstituentsParser(HTMLParser):
             self._cell.append(data)
 
 
+_ISO_DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
+_LONG_DATE = re.compile(r"([A-Z][a-z]+)\.? (\d{1,2}), (\d{4})")
+
+
+def _parse_wiki_date(text: str | None) -> date | None:
+    """A date cell ('2025-09-22' or 'September 22, 2025', footnotes tolerated); else None."""
+    raw = (text or "").strip()
+    if m := _ISO_DATE.search(raw):
+        try:
+            return date(int(m[1]), int(m[2]), int(m[3]))
+        except ValueError:
+            return None
+    if m := _LONG_DATE.search(raw):
+        for fmt in ("%B %d, %Y", "%b %d, %Y"):
+            try:
+                return datetime.strptime(f"{m[1]} {m[2]}, {m[3]}", fmt).date()
+            except ValueError:
+                continue
+    return None
+
+
+class _TablesParser(HTMLParser):
+    """Rows of every top-level table that is not the constituents table."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.tables: list[list[list[str]]] = []
+        self._depth = 0
+        self._skip = False
+        self._rows: list[list[str]] = []
+        self._row: list[str] | None = None
+        self._cell: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "table":
+            if self._depth:
+                self._depth += 1
+            else:
+                self._depth = 1
+                self._skip = dict(attrs).get("id") == "constituents"
+                self._rows = []
+        elif self._depth == 1 and not self._skip:
+            if tag == "tr":
+                self._row = []
+            elif tag in ("td", "th") and self._row is not None:
+                self._cell = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "table" and self._depth:
+            self._depth -= 1
+            if self._depth == 0 and not self._skip and self._rows:
+                self.tables.append(self._rows)
+        elif self._depth == 1 and not self._skip:
+            if tag in ("td", "th") and self._cell is not None and self._row is not None:
+                self._row.append(" ".join("".join(self._cell).split()))
+                self._cell = None
+            elif tag == "tr" and self._row is not None:
+                if self._row:
+                    self._rows.append(self._row)
+                self._row = None
+
+    def handle_data(self, data: str) -> None:
+        if self._depth == 1 and not self._skip and self._cell is not None:
+            self._cell.append(data)
+
+
+CHANGES_SCHEMA = {
+    "date": pl.Date,
+    "symbol": pl.String,
+    "action": pl.String,
+    "reason": pl.String,
+}
+
+
+def parse_wikipedia_changes(html_text: str) -> pl.DataFrame | None:
+    """Route (b): the index changes table on the constituents page, or None if absent.
+
+    A changes table is a table other than `constituents` whose header rows contain a
+    "Date" column and both an "Added" and a "Removed" column. Data rows are those whose
+    first cell is a date; the layout is Date | Added ticker | Added security |
+    Removed ticker | Removed security | Reason. Returns [date, symbol, action, reason].
+    """
+    parser = _TablesParser()
+    parser.feed(html_text)
+    for rows in parser.tables:
+        head = " ".join(" ".join(r) for r in rows[:2]).lower()
+        if not ("date" in head and "added" in head and "removed" in head):
+            continue
+        out: list[dict] = []
+        for row in rows:
+            when = _parse_wiki_date(row[0]) if row else None
+            if when is None or len(row) < 5:
+                continue
+            reason = row[5] if len(row) > 5 else ""
+            for idx, action in ((1, "added"), (3, "removed")):
+                raw = row[idx].strip()
+                if not raw:
+                    continue
+                try:
+                    sym = normalize(raw, "wikipedia")
+                except ValueError:
+                    continue
+                out.append({"date": when, "symbol": sym, "action": action, "reason": reason})
+        if out:
+            return pl.DataFrame(out, schema=CHANGES_SCHEMA)
+    return None
+
+
 def parse_wikipedia_constituents(html_text: str) -> pl.DataFrame:
     parser = _ConstituentsParser()
     parser.feed(html_text)
@@ -183,7 +303,11 @@ def parse_wikipedia_constituents(html_text: str) -> pl.DataFrame:
 
     i_sym, i_name = col("symbol"), col("security")
     i_sector, i_sub = col("gics", "sector"), col("gics", "sub")
-    out: dict[str, dict[str, str]] = {}
+    try:
+        i_added: int | None = col("date", "added")
+    except ValueError:
+        i_added = None  # column absent: every date_added is null
+    out: dict[str, dict] = {}
     for row in parser.rows[1:]:
         if len(row) <= max(i_sym, i_name, i_sector, i_sub):
             continue
@@ -193,6 +317,11 @@ def parse_wikipedia_constituents(html_text: str) -> pl.DataFrame:
             "name": row[i_name],
             "gics_sector": row[i_sector],
             "gics_sub_industry": row[i_sub],
+            "date_added": (
+                _parse_wiki_date(row[i_added])
+                if i_added is not None and i_added < len(row)
+                else None
+            ),
         }
     df = pl.DataFrame(
         list(out.values()),
@@ -201,6 +330,7 @@ def parse_wikipedia_constituents(html_text: str) -> pl.DataFrame:
             "name": pl.String,
             "gics_sector": pl.String,
             "gics_sub_industry": pl.String,
+            "date_added": pl.Date,
         },
     )
     if df.height < _MIN_WIKI_ROWS:
@@ -211,8 +341,8 @@ def parse_wikipedia_constituents(html_text: str) -> pl.DataFrame:
     return df
 
 
-def fetch_wikipedia_constituents(http: httpx.Client) -> pl.DataFrame:
-    """One GET of the fixed URL; returns [symbol, name, gics_sector, gics_sub_industry]."""
+def fetch_wikipedia(http: httpx.Client) -> tuple[pl.DataFrame, pl.DataFrame | None]:
+    """One GET of the fixed URL; (constituents, changes table or None)."""
     resp = http.get(
         WIKIPEDIA_URL,
         headers={"User-Agent": _USER_AGENT},
@@ -220,7 +350,12 @@ def fetch_wikipedia_constituents(http: httpx.Client) -> pl.DataFrame:
         follow_redirects=True,
     )
     resp.raise_for_status()
-    return parse_wikipedia_constituents(resp.text)
+    return parse_wikipedia_constituents(resp.text), parse_wikipedia_changes(resp.text)
+
+
+def fetch_wikipedia_constituents(http: httpx.Client) -> pl.DataFrame:
+    """One GET of the fixed URL; [symbol, name, gics_sector, gics_sub_industry, date_added]."""
+    return fetch_wikipedia(http)[0]
 
 
 # ---------------------------------------------------------------------- hanshof
@@ -257,14 +392,24 @@ def load_hanshof_csv(
 
 # ---------------------------------------------------------------------- membership
 def build_membership(
-    hanshof: pl.DataFrame, fmp_changes: pl.DataFrame, start: date = MEMBERSHIP_START
+    hanshof: pl.DataFrame,
+    current_table: pl.DataFrame | None,
+    fmp_changes: pl.DataFrame | None,
+    start: date = MEMBERSHIP_START,
+    as_of: date | None = None,
+    changes_source: str = SRC_FMP,
 ) -> pl.DataFrame:
-    """Point-in-time intervals [symbol, start_date, end_date, source].
+    """Point-in-time intervals [symbol, start_date, end_date, source] (AMD-0013 2C).
 
-    hanshof snapshots are diffed in order (primary). FMP changes dated strictly after
-    hanshof's last snapshot extend the result. A symbol removed on D is not a member on D:
-    its `end_date` is the last trading day before D (closed interval, AMD-0011). Contiguous
-    or overlapping intervals of one symbol are merged; `end_date` NULL means current.
+    hanshof snapshots are diffed in order up to the last snapshot H (source 'hanshof').
+    The gap after H is filled by the first available route: `fmp_changes` when given
+    (a: source 'fmp', or b: source 'wikipedia-changes' - pass `changes_source`), else
+    (c) derivation from `current_table` [symbol, date_added]: a current row whose
+    `date_added` is in (H, as_of] starts that day ('wikipedia-derived-exact'); a symbol in
+    hanshof@H but absent from the current table ends at H ('wikipedia-derived-bounded').
+    A symbol removed on D is not a member on D: `end_date` is the last trading day before
+    D (closed interval, AMD-0011). Contiguous or overlapping intervals of one symbol are
+    merged; `end_date` NULL means current.
     """
     snapshots = sorted(
         ((r["date"], set(r["symbols"])) for r in hanshof.iter_rows(named=True)),
@@ -280,25 +425,37 @@ def build_membership(
     prev: set[str] = set()
     for d, members in snapshots:
         for sym in sorted(members - prev):
-            open_[sym] = (d, "hanshof")
+            open_[sym] = (d, SRC_HANSHOF)
         for sym in sorted(prev - members):
             began, src = open_.pop(sym)
             closed.append((sym, began, previous_trading_day(d), src))
         prev = members
 
-    changes = fmp_changes.filter(pl.col("date") > last_hanshof).sort(["date", "action"])
-    for rec in changes.iter_rows(named=True):
-        sym, d, action = rec["symbol"], rec["date"], rec["action"]
-        if action == "added":
-            if sym not in open_:
-                open_[sym] = (d, "fmp")
-        elif action == "removed":
-            if sym in open_:
-                began, src = open_.pop(sym)
-                src = "hanshof+fmp" if src == "hanshof" else src
-                closed.append((sym, began, previous_trading_day(d), src))
-        else:
-            raise ValueError(f"unknown change action: {action!r}")
+    if fmp_changes is not None:
+        changes = fmp_changes.filter(pl.col("date") > last_hanshof).sort(["date", "action"])
+        for rec in changes.iter_rows(named=True):
+            sym, d, action = rec["symbol"], rec["date"], rec["action"]
+            if action == "added":
+                if sym not in open_:
+                    open_[sym] = (d, changes_source)
+            elif action == "removed":
+                if sym in open_:
+                    began, src = open_.pop(sym)
+                    src = f"{SRC_HANSHOF}+{changes_source}" if src == SRC_HANSHOF else src
+                    closed.append((sym, began, previous_trading_day(d), src))
+            else:
+                raise ValueError(f"unknown change action: {action!r}")
+    elif current_table is not None and (as_of is None or as_of > last_hanshof):
+        current = set(current_table["symbol"].to_list())
+        for sym in sorted(set(open_) - current):  # left the index somewhere in (H, today]
+            began, _ = open_.pop(sym)
+            closed.append((sym, began, last_hanshof, SRC_DERIVED_BOUNDED))
+        added = current_table.filter(pl.col("date_added") > last_hanshof)
+        if as_of is not None:
+            added = added.filter(pl.col("date_added") <= as_of)
+        for rec in added.sort(["date_added", "symbol"]).iter_rows(named=True):
+            if rec["symbol"] not in open_:
+                open_[rec["symbol"]] = (rec["date_added"], SRC_DERIVED_EXACT)
     closed.extend((sym, began, None, src) for sym, (began, src) in open_.items())
 
     by_symbol: dict[str, list[tuple[date, date | None, str]]] = {}
@@ -368,6 +525,8 @@ class UniverseReport:
     n_missing_group: int
     membership_rows: int
     sources_used: list[str]
+    gap_route: str = ROUTE_NONE
+    rows_by_source: dict[str, int] = field(default_factory=dict)
 
 
 def _resolve_current(
@@ -382,6 +541,7 @@ def _resolve_current(
                 "name": r["name"],
                 "sector": r["sector"],
                 "sub_industry": r["sub_industry"],
+                "date_added": None,
             }
     if wiki is not None:
         for r in wiki.iter_rows(named=True):
@@ -390,6 +550,7 @@ def _resolve_current(
                 "name": r["name"],
                 "sector": r["gics_sector"],
                 "sub_industry": r["gics_sub_industry"],
+                "date_added": r["date_added"],
             }
     return [merged[k] for k in sorted(merged)]
 
@@ -408,8 +569,9 @@ def refresh(
 
     # --- current constituents with GICS classification
     wiki: pl.DataFrame | None = None
+    wiki_changes: pl.DataFrame | None = None
     try:
-        wiki = fetch_wikipedia_constituents(http)
+        wiki, wiki_changes = fetch_wikipedia(http)
         sources.append("wikipedia")
     except (httpx.HTTPError, ValueError) as exc:
         log.warning("wikipedia_unavailable", error=type(exc).__name__)
@@ -417,6 +579,8 @@ def refresh(
     try:
         fmp_current = fmp.current_sp500()
         sources.append("fmp:sp500-constituent")
+    except ProviderUnavailable as exc:  # 402/403: not a failure (AMD-0013)
+        log.warning("fmp_current_unavailable", error=str(exc))
     except ProviderError as exc:
         if wiki is None:
             raise
@@ -428,10 +592,43 @@ def refresh(
     # --- historical membership
     hanshof = load_hanshof_csv(HANSHOF_URL, http)
     sources.append("hanshof")
-    changes = fmp.historical_sp500_changes().filter(pl.col("date") <= as_of)
-    sources.append("fmp:historical-sp500-constituent")
     hanshof = hanshof.filter(pl.col("date") <= as_of)
-    membership = build_membership(hanshof, changes, start=MEMBERSHIP_START)
+    # gap H -> today: first available route (AMD-0013 2C): (a) FMP, (b) page changes table,
+    # (c) derivation from the current table
+    changes: pl.DataFrame | None = None
+    changes_source = SRC_FMP
+    gap_route = ROUTE_DERIVED
+    try:
+        changes = fmp.historical_sp500_changes().filter(pl.col("date") <= as_of)
+        gap_route = ROUTE_FMP
+        sources.append("fmp:historical-sp500-constituent")
+    except ProviderUnavailable as exc:
+        log.warning("fmp_changes_unavailable", error=str(exc))
+    if changes is None and wiki_changes is not None:
+        changes = wiki_changes.filter(pl.col("date") <= as_of)
+        changes_source = SRC_WIKI_CHANGES
+        gap_route = ROUTE_WIKI_CHANGES
+        sources.append("wikipedia:changes")
+    if changes is None:
+        if wiki is None:
+            raise ProviderError("no route available for the membership gap after hanshof")
+        sources.append("wikipedia:derived")
+    membership = build_membership(
+        hanshof,
+        pl.DataFrame(
+            {
+                "symbol": [r["symbol"] for r in current],
+                "date_added": [r["date_added"] for r in current],
+            },
+            schema={"symbol": pl.String, "date_added": pl.Date},
+        )
+        if changes is None
+        else None,
+        changes,
+        start=MEMBERSHIP_START,
+        as_of=as_of,
+        changes_source=changes_source,
+    )
     bad = [s for s in membership["symbol"].unique().to_list() if not is_valid(s)]
     if bad:
         raise ValueError(f"non-canonical membership symbols: {bad[:5]}")
@@ -442,19 +639,23 @@ def refresh(
     rows: list[dict] = []
     missing: list[str] = []
     fallbacks = 0
+    profile_unavailable = False
     for rec in current:
         sym = rec["symbol"]
         group: str | None = None
         try:
             group = map_industry_group(rec["sub_industry"], gics)
         except ValueError:
-            if fallbacks < MAX_PROFILE_FALLBACKS:
+            if fallbacks < MAX_PROFILE_FALLBACKS and not profile_unavailable:
                 fallbacks += 1
                 try:
                     prof = fmp.profile(sym)
                     group = map_industry_group(prof.get("industry"), gics)
                     if "fmp:profile" not in sources:
                         sources.append("fmp:profile")
+                except ProviderUnavailable:
+                    profile_unavailable = True  # counts as unmapped; stop spending calls
+                    group = None
                 except (ProviderError, ValueError):
                     group = None
         if group is None:
@@ -500,6 +701,10 @@ def refresh(
     _deactivate_departed(store, keep=set(symbols_df["symbol"].to_list()))
     _replace_membership(store, membership)
 
+    rows_by_source = {
+        str(k): int(v)
+        for k, v in membership.group_by("source").len().sort("source").iter_rows()
+    }
     n_members_today = len(store.members_on(as_of))
     n_symbols = store.read("SELECT count(*) AS n FROM symbols")["n"][0]
     return UniverseReport(
@@ -508,6 +713,8 @@ def refresh(
         n_missing_group=len(missing),
         membership_rows=membership.height,
         sources_used=sources,
+        gap_route=gap_route,
+        rows_by_source=rows_by_source,
     )
 
 

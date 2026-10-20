@@ -17,20 +17,25 @@ from argus.data.store import Store
 from argus.data.tickers import is_valid
 from argus.data.universe import (
     HANSHOF_URL,
+    MAX_BOUNDED_ROWS,
     WIKIPEDIA_URL,
     build_membership,
     fetch_wikipedia_constituents,
     load_hanshof_csv,
     map_industry_group,
     next_trading_day,
+    parse_wikipedia_changes,
     previous_trading_day,
+    refresh,
 )
+from argus.settings import get_settings
 
 TESTS = Path(__file__).parent
 FIX = TESTS / "fixtures"
 CONFIG = TESTS.parent / "config"
 WIKI_HTML = (FIX / "universe" / "wikipedia_sp500.html").read_text(encoding="utf-8")
 HANSHOF_SAMPLE = FIX / "universe" / "hanshof_sample.csv"
+CHANGES_TABLE = (FIX / "universe" / "wikipedia_changes_table.html").read_text(encoding="utf-8")
 HISTORICAL = json.loads((FIX / "fmp" / "historical_sp500.json").read_text())
 CURRENT = json.loads((FIX / "fmp" / "sp500_constituent.json").read_text())
 
@@ -72,7 +77,7 @@ def fmp_changes(tmp_path):
 # ---------------------------------------------------------------- wikipedia
 def test_wikipedia_parse_counts():
     df = fetch_wikipedia_constituents(_wiki_client())
-    assert df.columns == ["symbol", "name", "gics_sector", "gics_sub_industry"]
+    assert df.columns == ["symbol", "name", "gics_sector", "gics_sub_industry", "date_added"]
     assert df.height >= 490
     assert df["gics_sector"].n_unique() == 11
     assert (df["gics_sub_industry"].str.strip_chars() != "").all()
@@ -139,7 +144,7 @@ def _no_changes() -> pl.DataFrame:
 def test_membership_intervals():
     hanshof = load_hanshof_csv(HANSHOF_SAMPLE)
     assert hanshof.height == 10
-    df = build_membership(hanshof, _no_changes(), start=date(2015, 1, 1))
+    df = build_membership(hanshof, None, _no_changes(), start=date(2015, 1, 1))
     assert df.columns == ["symbol", "start_date", "end_date", "source"]
     # FSLR leaves in the snapshot dated Monday 2017-03-20 and returns on 2022-12-19:
     assert _intervals(df, "FSLR") == [
@@ -168,7 +173,7 @@ def test_membership_start_clip_merge_and_holiday():
             "symbols": [["AAA", "BBB"], ["AAA"], ["AAA", "BBB"], ["AAA", "BBB"]],
         }
     )
-    df = build_membership(snaps, _no_changes(), start=date(2015, 1, 1))
+    df = build_membership(snaps, None, _no_changes(), start=date(2015, 1, 1))
     # start clipped to 2015-01-01; BBB removed Tue 2016-01-19, MLK Monday => end Fri 01-15
     assert _intervals(df, "BBB")[0] == (date(2015, 1, 1), date(2016, 1, 15), "hanshof")
     assert _intervals(df, "BBB")[1][0] == date(2016, 6, 1)
@@ -177,14 +182,14 @@ def test_membership_start_clip_merge_and_holiday():
     snaps2 = pl.DataFrame(
         {"date": [date(2013, 1, 2), date(2014, 3, 3)], "symbols": [["OLD"], ["NEW"]]}
     )
-    out = build_membership(snaps2, _no_changes(), start=date(2015, 1, 1))
+    out = build_membership(snaps2, None, _no_changes(), start=date(2015, 1, 1))
     assert out["symbol"].to_list() == ["NEW"]
 
 
 def test_fmp_fills_gap_after_hanshof(fmp_changes):
     hanshof = load_hanshof_csv(HANSHOF_SAMPLE)
     assert hanshof["date"].max() == date(2025, 8, 23)
-    df = build_membership(hanshof, fmp_changes, start=date(2015, 1, 1))
+    df = build_membership(hanshof, None, fmp_changes, start=date(2015, 1, 1))
     assert _intervals(df, "IBKR") == [(date(2025, 8, 28), None, "fmp")]
     for sym in ("APP", "HOOD", "EME"):
         assert _intervals(df, sym) == [(date(2025, 9, 22), None, "fmp")]
@@ -200,7 +205,7 @@ def test_fmp_fills_gap_after_hanshof(fmp_changes):
 def test_fmp_change_on_or_before_last_hanshof_snapshot_is_ignored(fmp_changes):
     hanshof = load_hanshof_csv(HANSHOF_SAMPLE)
     last = hanshof["date"].max()
-    baseline = build_membership(hanshof, fmp_changes, start=date(2015, 1, 1))
+    baseline = build_membership(hanshof, None, fmp_changes, start=date(2015, 1, 1))
     assert _intervals(baseline, "AAPL") == [(date(2015, 1, 1), None, "hanshof")]
     stale = pl.DataFrame(
         {
@@ -211,7 +216,7 @@ def test_fmp_change_on_or_before_last_hanshof_snapshot_is_ignored(fmp_changes):
         }
     )
     assert stale["date"].max() <= last
-    out = build_membership(hanshof, pl.concat([fmp_changes, stale]), start=date(2015, 1, 1))
+    out = build_membership(hanshof, None, pl.concat([fmp_changes, stale]), start=date(2015, 1, 1))
     # hanshof is primary up to its last snapshot: these FMP changes must change nothing
     assert out.sort(["symbol", "start_date"]).equals(baseline.sort(["symbol", "start_date"]))
     assert _intervals(out, "AAPL") == [(date(2015, 1, 1), None, "hanshof")]
@@ -228,18 +233,40 @@ def cli_env(clean_env, tmp_path):
     return tmp_path / "store"
 
 
-def _mock_sources(wiki_html: str = WIKI_HTML, profile=None):
+def _mock_sources(
+    wiki_html: str = WIKI_HTML,
+    profile=None,
+    fmp_status: int = 200,
+    profile_status: int = 200,
+    hanshof_text: str | None = None,
+):
+    """respx routes for every source; `fmp_status`!=200 makes the three non-profile endpoints
+    (and `profile_status`!=200 the profile endpoint) answer with that HTTP status."""
     respx.get(WIKIPEDIA_URL).mock(return_value=httpx.Response(200, text=wiki_html))
     respx.get(HANSHOF_URL).mock(
-        return_value=httpx.Response(200, text=HANSHOF_SAMPLE.read_text(encoding="utf-8"))
+        return_value=httpx.Response(
+            200, text=hanshof_text or HANSHOF_SAMPLE.read_text(encoding="utf-8")
+        )
     )
-    respx.get(BASE_URL + "historical-sp500-constituent").mock(
-        return_value=httpx.Response(200, json=HISTORICAL)
-    )
-    respx.get(BASE_URL + "sp500-constituent").mock(return_value=httpx.Response(200, json=CURRENT))
+    for endpoint, body in (
+        ("historical-sp500-constituent", HISTORICAL),
+        ("sp500-constituent", CURRENT),
+    ):
+        respx.get(BASE_URL + endpoint).mock(
+            return_value=httpx.Response(200, json=body)
+            if fmp_status == 200
+            else httpx.Response(fmp_status, json={"Error Message": "not on this plan"})
+        )
+    respx.get(BASE_URL + "stock-list").mock(return_value=httpx.Response(fmp_status))
     return respx.get(BASE_URL + "profile").mock(
         return_value=httpx.Response(200, json=profile if profile is not None else [])
+        if profile_status == 200
+        else httpx.Response(profile_status, json={"Error Message": "not on this plan"})
     )
+
+
+def _fmp_calls() -> int:
+    return sum(c.request.url.host == "financialmodelingprep.com" for c in respx.calls)
 
 
 @respx.mock
@@ -267,6 +294,8 @@ def test_refresh_populates_symbols_and_membership(cli_env):
     assert "IBKR" in members and "WBA" not in members
     assert store.members_on(date(2025, 8, 27)).count("WBA") == 1
     assert "missing industry group: 0" in result.output
+    assert "membership gap route: fmp" in result.output
+    assert "rows by source:" in result.output and "fmp=" in result.output
     used = store.read("SELECT SUM(rows) AS n FROM ingest_log WHERE source = ?", ["fmp-budget"])
     assert used["n"][0] <= 60
     logged = store.read("SELECT status FROM ingest_log WHERE source = ?", ["universe"])
@@ -333,3 +362,189 @@ def test_refresh_requires_fmp_key(clean_env, tmp_path):
     result = runner.invoke(app, ["universe", "refresh"])
     assert result.exit_code == 1
     assert "fmp_api_key" in result.output
+
+
+# ---------------------------------------------------------------- AMD-0013 routing
+def _run_refresh(cli_env, as_of=date(2026, 10, 20)):
+    store = Store(cli_env)
+    store.init_schema()
+    with httpx.Client() as http:
+        report = refresh(store, get_settings(), http, as_of=as_of)
+    return store, report
+
+
+def _hanshof_with_extra_last_members(n: int) -> str:
+    """The sample, with n extra tickers in its last snapshot (absent from the wiki fixture)."""
+    lines = HANSHOF_SAMPLE.read_text(encoding="utf-8").rstrip("\n").split("\n")
+    assert lines[-1].startswith("2025-08-23,") and lines[-1].endswith('"')
+    extras = "".join(f",ZQX{chr(65 + i)}" for i in range(n))
+    lines[-1] = lines[-1][:-1] + extras + '"'
+    return "\n".join(lines) + "\n"
+
+
+def test_wikipedia_date_added_parsed_and_tolerant():
+    df = fetch_wikipedia_constituents(_wiki_client())
+    dates = dict(zip(df["symbol"].to_list(), df["date_added"].to_list(), strict=True))
+    assert dates["APP"] == date(2025, 9, 22) and dates["IBKR"] == date(2025, 8, 28)
+    html = WIKI_HTML.replace("<td>2025-09-22</td>", "<td></td>", 1).replace(
+        "<td>2025-08-28</td>", "<td>sometime in 2025 [3]</td>", 1
+    )
+    assert html != WIKI_HTML
+    df2 = fetch_wikipedia_constituents(_wiki_client(html))
+    assert df2.height == df.height
+    assert df2["date_added"].null_count() == df["date_added"].null_count() + 2
+    html3 = WIKI_HTML.replace("<td>2025-09-22</td>", "<td>September 22, 2025[5]</td>", 1)
+    d3 = dict(zip(*[fetch_wikipedia_constituents(_wiki_client(html3))[c].to_list()
+                    for c in ("symbol", "date_added")], strict=True))
+    assert d3["APP"] == date(2025, 9, 22)
+
+
+def test_changes_table_detected_when_present_and_skipped_when_absent():
+    assert parse_wikipedia_changes(WIKI_HTML) is None  # the live page shape: no changes table
+    page = WIKI_HTML.replace("</body>", CHANGES_TABLE + "</body>")
+    assert page != WIKI_HTML
+    ch = parse_wikipedia_changes(page)
+    assert ch is not None
+    got = {(r["date"], r["symbol"], r["action"]) for r in ch.iter_rows(named=True)}
+    assert (date(2025, 8, 28), "IBKR", "added") in got
+    assert (date(2025, 8, 28), "WBA", "removed") in got
+    assert (date(2025, 9, 22), "APP", "added") in got
+    assert (date(2025, 8, 1), "OLDX", "removed") in got and ch.height == 9
+    # a table without Added/Removed columns is not a changes table
+    other = WIKI_HTML.replace(
+        "</body>", "<table><tr><th>Date</th><th>Note</th></tr><tr><td>2025-01-01</td>"
+        "<td>x</td></tr></table></body>"
+    )
+    assert parse_wikipedia_changes(other) is None
+
+
+@respx.mock
+def test_route_b_used_when_changes_table_present_and_fmp_402(cli_env):
+    _mock_sources(
+        wiki_html=WIKI_HTML.replace("</body>", CHANGES_TABLE + "</body>"), fmp_status=402
+    )
+    store, report = _run_refresh(cli_env)
+    assert report.gap_route == "wikipedia-changes"
+    assert report.rows_by_source.get("wikipedia-derived-bounded", 0) == 0
+    iv = store.read("SELECT * FROM membership WHERE symbol IN ('IBKR','WBA') ORDER BY symbol")
+    got = {
+        r["symbol"]: (r["start_date"], r["end_date"], r["source"]) for r in iv.iter_rows(named=True)
+    }
+    assert got["IBKR"] == (date(2025, 8, 28), None, "wikipedia-changes")
+    assert got["WBA"][1] == date(2025, 8, 27) and got["WBA"][2] == "hanshof+wikipedia-changes"
+    assert report.rows_by_source["wikipedia-changes"] >= 4
+
+
+@respx.mock
+def test_gap_derivation_when_fmp_402(cli_env):
+    _mock_sources(fmp_status=402)  # fixture page has NO changes table
+    store, report = _run_refresh(cli_env)
+    assert report.gap_route == "wikipedia-derived"
+    rows = store.read("SELECT * FROM membership")
+    by = {}
+    for r in rows.iter_rows(named=True):
+        by.setdefault(r["symbol"], []).append((r["start_date"], r["end_date"], r["source"]))
+    # additions after H are exact, with the page's own Date added
+    assert by["IBKR"] == [(date(2025, 8, 28), None, "wikipedia-derived-exact")]
+    for sym in ("APP", "HOOD", "EME"):
+        assert by[sym] == [(date(2025, 9, 22), None, "wikipedia-derived-exact")]
+    # in hanshof@H but absent from the current table: bounded at H
+    assert by["WBA"][-1] == (date(2015, 1, 1), date(2025, 8, 23), "wikipedia-derived-bounded")
+    # untouched members keep the hanshof source
+    assert by["AAPL"] == [(date(2015, 1, 1), None, "hanshof")]
+    h = load_hanshof_csv(HANSHOF_SAMPLE)
+    last = set(h["symbols"][-1].to_list())
+    cur = set(fetch_wikipedia_constituents(_wiki_client())["symbol"].to_list())
+    assert report.rows_by_source["wikipedia-derived-bounded"] == len(last - cur) == 33
+    assert report.rows_by_source["hanshof"] > 500
+    # exact additions: every current row with Date added in (H, as_of]
+    wiki = fetch_wikipedia_constituents(_wiki_client())
+    n_exact = wiki.filter(pl.col("date_added") > date(2025, 8, 23)).height
+    assert report.rows_by_source["wikipedia-derived-exact"] == n_exact
+    # not a member after being bounded out; a member from the exact date
+    assert "WBA" not in store.members_on(date(2026, 10, 20))
+    assert "APP" not in store.members_on(date(2025, 9, 21))
+    assert "APP" in store.members_on(date(2025, 9, 22))
+
+
+@respx.mock
+def test_derivation_respects_as_of(cli_env):
+    _mock_sources(fmp_status=402)
+    store, report = _run_refresh(cli_env, as_of=date(2025, 9, 1))
+    assert "IBKR" in store.members_on(date(2025, 9, 1)) and "APP" not in store.members_on(
+        date(2025, 9, 1)
+    )
+    assert report.rows_by_source.get("wikipedia-derived-exact", 0) == 1  # only IBKR <= as_of
+
+
+@respx.mock
+def test_402_does_not_abort_refresh(cli_env):
+    # every FMP endpoint is 402, including profile, and one row needs the profile fallback
+    broken = WIKI_HTML.replace("<td>Semiconductors</td>", "<td>Quantum Widgets</td>", 1)
+    profile = _mock_sources(wiki_html=broken, fmp_status=402, profile_status=402)
+    store, report = _run_refresh(cli_env)  # must not raise
+    assert report.n_symbols > 500 and report.n_members_today > 0
+    assert report.n_missing_group == 1  # unmapped, counted, not an abort
+    assert report.gap_route == "wikipedia-derived"
+    assert profile.call_count == 1
+    assert "fmp:sp500-constituent" not in report.sources_used
+    assert "fmp:historical-sp500-constituent" not in report.sources_used
+    result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
+    assert result.exit_code == 1  # only because of the unmapped group (existing rule)
+    assert "membership gap route: wikipedia-derived" in result.output
+    assert "rows by source:" in result.output
+
+
+@respx.mock
+def test_402_everywhere_exits_zero_and_stays_inside_call_budget(cli_env):
+    _mock_sources(fmp_status=402, profile_status=402)
+    result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
+    assert result.exit_code == 0, result.output
+    assert 0 < _fmp_calls() <= 60
+    assert "wikipedia-derived-bounded=33" in result.output
+
+
+@respx.mock
+def test_fmp_call_count_bounded_when_many_profile_fallbacks(cli_env):
+    # make >50 current members need the profile fallback; calls must still be <= 60 (AC6)
+    broken = WIKI_HTML
+    for sub in ("Semiconductors", "Application Software", "Health Care Equipment",
+                "Regional Banks", "Systems Software"):
+        broken = broken.replace(f"<td>{sub}</td>", "<td>Quantum Widgets</td>")
+    profile = _mock_sources(wiki_html=broken, profile=[])
+    _, report = _run_refresh(cli_env, as_of=date(2025, 12, 31))
+    assert report.n_missing_group > 50
+    assert profile.call_count == 50
+    assert _fmp_calls() <= 60
+
+
+@respx.mock
+def test_bounded_removals_over_limit_is_a_stop(cli_env):
+    n_base = 33
+    # exactly at the limit: allowed
+    _mock_sources(fmp_status=402, hanshof_text=_hanshof_with_extra_last_members(
+        MAX_BOUNDED_ROWS - n_base))
+    ok = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
+    assert ok.exit_code == 0, ok.output
+    assert f"wikipedia-derived-bounded={MAX_BOUNDED_ROWS}" in ok.output
+    respx.reset()
+    # one over: stop (exit 1), still reported
+    _mock_sources(fmp_status=402, hanshof_text=_hanshof_with_extra_last_members(
+        MAX_BOUNDED_ROWS - n_base + 1))
+    bad = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
+    assert bad.exit_code == 1
+    assert f"wikipedia-derived-bounded={MAX_BOUNDED_ROWS + 1}" in bad.output
+    assert "STOP" in bad.output
+    logged = Store(cli_env).read(
+        "SELECT status FROM ingest_log WHERE source = ? ORDER BY finished_at", ["universe"]
+    )
+    assert logged["status"].to_list() == ["ok", "failed"]
+
+
+@respx.mock
+def test_other_fmp_errors_still_abort_refresh(cli_env):
+    # only 402/403 mean "unavailable"; a 500 on the changes endpoint is still a failure
+    _mock_sources()
+    respx.get(BASE_URL + "historical-sp500-constituent").mock(return_value=httpx.Response(500))
+    result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
+    assert result.exit_code == 1

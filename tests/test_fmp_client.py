@@ -11,7 +11,7 @@ import structlog
 from pydantic import SecretStr
 
 from argus.data.providers.base import ProviderError
-from argus.data.providers.fmp import BASE_URL, FMPClient
+from argus.data.providers.fmp import BASE_URL, FMPClient, ProviderUnavailable
 from argus.data.store import Store
 from argus.logging import configure_logging
 
@@ -130,3 +130,42 @@ def test_current_sp500_and_profile(store):
     assert df.height >= 490
     assert client.profile("BRK.B")["industry"] == "x"
     assert prof.calls[0].request.url.params["symbol"] == "BRK.B"  # FMP uses the dot form
+
+
+@pytest.mark.parametrize("status", [402, 403])
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda c: c.historical_sp500_changes(),
+        lambda c: c.current_sp500(),
+        lambda c: c.profile("AAPL"),
+    ],
+)
+@respx.mock
+def test_402_403_raise_provider_unavailable_without_key(store, capsys, status, call):
+    endpoint_routes = [
+        respx.get(BASE_URL + p).mock(return_value=httpx.Response(status, text="plan"))
+        for p in ("historical-sp500-constituent", "sp500-constituent", "profile")
+    ]
+    structlog.reset_defaults()
+    configure_logging()
+    client = _client(store)
+    with pytest.raises(ProviderUnavailable) as err:
+        call(client)
+    assert isinstance(err.value, ProviderError)
+    assert str(status) in str(err.value)
+    blob = "".join(traceback.format_exception(err.value)) + capsys.readouterr().out
+    assert KEY not in blob and "apikey" not in blob.lower()
+    assert sum(r.call_count for r in endpoint_routes) == 1  # unavailable is not retried
+
+
+@respx.mock
+def test_other_4xx_and_5xx_are_not_unavailable(store):
+    respx.get(BASE_URL + "profile").mock(return_value=httpx.Response(401))
+    with pytest.raises(ProviderError) as err:
+        _client(store).profile("AAPL")
+    assert not isinstance(err.value, ProviderUnavailable)
+    respx.get(BASE_URL + "profile").mock(return_value=httpx.Response(500))
+    with pytest.raises(ProviderError) as err2:
+        _client(store).profile("AAPL")
+    assert not isinstance(err2.value, ProviderUnavailable)
