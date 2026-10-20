@@ -73,7 +73,7 @@ def polygon(
 def polygon_actions(
     since: str = typer.Option(..., "--since", help="Earliest execution/ex-dividend date (ISO)."),
 ) -> None:
-    """Ingest Polygon splits and dividends into adjustments."""
+    """Ingest Polygon splits and dividends into the splits and dividends tables."""
     since_d = _iso(since)
     client, store = _client_and_store()
     try:
@@ -83,4 +83,4 @@ def polygon_actions(
         raise typer.Exit(1) from None
     finally:
         client.close()
-    typer.echo(f"adjustments upserted: {n}")
+    typer.echo(f"split and dividend rows upserted: {n}")

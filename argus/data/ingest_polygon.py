@@ -1,4 +1,4 @@
-"""Polygon ingestion (WO-0004): daily bars into bars_raw, splits/dividends into adjustments."""
+"""Polygon ingestion (WO-0004): bars into bars_raw, splits and dividends into their tables."""
 
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -60,8 +60,7 @@ def ingest_polygon_day(store: Store, client: PolygonClient, d: date) -> IngestRe
         members = store.members_on(d)
         splits_today = set(
             store.read(
-                "SELECT symbol FROM adjustments "
-                "WHERE date = ? AND split_ratio IS NOT NULL AND split_ratio <> 1",
+                "SELECT symbol FROM splits WHERE date = ? AND ratio <> 1",
                 [d],
             )["symbol"].to_list()
         )
@@ -102,18 +101,30 @@ def backfill_polygon(
 
 
 def ingest_polygon_actions(store: Store, client: PolygonClient, since: date) -> int:
-    """Upsert splits and dividends (for symbols in `symbols`) into adjustments."""
+    """Upsert splits -> `splits` and dividends -> `dividends` (symbols in `symbols` only).
+
+    Two tables keyed (symbol, date, source) so a same-date split and dividend both persist
+    (AMD-0012). Returns the total rows written across both tables.
+    """
     known = store.read("SELECT symbol FROM symbols")["symbol"].to_list()
-    splits = client.splits(since).filter(pl.col("symbol").is_in(known))
-    divs = client.dividends(since).filter(pl.col("symbol").is_in(known))
-    splits = splits.unique(subset=["symbol", "date"], keep="last", maintain_order=True)
-    divs = divs.unique(subset=["symbol", "date"], keep="last", maintain_order=True)
-    merged = splits.join(divs, on=["symbol", "date"], how="full", coalesce=True).with_columns(
-        pl.lit(SOURCE).alias("source")
+    keys = ["symbol", "date", "source"]
+    splits = (
+        client.splits(since)
+        .filter(pl.col("symbol").is_in(known))
+        .unique(subset=["symbol", "date"], keep="last", maintain_order=True)
+        .rename({"split_ratio": "ratio"})
+        .with_columns(pl.lit(SOURCE).alias("source"))
+        .select("symbol", "date", "ratio", "source")
     )
-    n = store.upsert(
-        "adjustments", merged.select("symbol", "date", "split_ratio", "cash_dividend", "source"),
-        ["symbol", "date"],
+    divs = (
+        client.dividends(since)
+        .filter(pl.col("symbol").is_in(known))
+        .unique(subset=["symbol", "date"], keep="last", maintain_order=True)
+        .rename({"cash_dividend": "cash_amount"})
+        .with_columns(pl.lit(SOURCE).alias("source"))
+        .select("symbol", "date", "cash_amount", "source")
     )
-    log.info("ingest_polygon_actions", since=since.isoformat(), rows=n)
-    return n
+    n_splits = store.upsert("splits", splits, keys)
+    n_divs = store.upsert("dividends", divs, keys)
+    log.info("ingest_polygon_actions", since=since.isoformat(), splits=n_splits, dividends=n_divs)
+    return n_splits + n_divs

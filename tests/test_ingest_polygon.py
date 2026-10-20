@@ -166,13 +166,9 @@ def test_jump_without_split_rejected_with_split_ok(store, client):
     _grouped_route(lambda req: httpx.Response(200, json=jumped))
     assert ingest_polygon_day(store, client, day2).status == "rejected"
     store.upsert(
-        "adjustments",
-        pl.DataFrame(
-            {"symbol": ["MAA"], "date": [day2], "split_ratio": [2.0], "cash_dividend": [None],
-             "source": ["polygon"]},
-            schema_overrides={"cash_dividend": pl.Float64},
-        ),
-        ["symbol", "date"],
+        "splits",
+        pl.DataFrame({"symbol": ["MAA"], "date": [day2], "ratio": [2.0], "source": ["polygon"]}),
+        ["symbol", "date", "source"],
     )
     assert ingest_polygon_day(store, client, day2).status == "ok"
 
@@ -224,16 +220,52 @@ def test_actions_upsert(store, client):
         json=json.loads((FIX / "dividends.json").read_text())
     )
     n = ingest_polygon_actions(store, client, date(2026, 1, 1))
-    # splits MAA/MAB/MAC + dividends MAA(same day as split)/MAD/BRK.B; NAA not in symbols
-    assert n == 5
-    adj = store.read("SELECT * FROM adjustments ORDER BY symbol, date")
-    maa = adj.filter(pl.col("symbol") == "MAA").row(0, named=True)
-    assert maa["split_ratio"] == 4.0 and maa["cash_dividend"] == 0.25 and maa["source"] == "polygon"
-    assert adj.filter(pl.col("symbol") == "MAB")["split_ratio"][0] == 0.1
-    assert adj.filter(pl.col("symbol") == "MAD")["split_ratio"][0] is None
-    # idempotent
-    assert ingest_polygon_actions(store, client, date(2026, 1, 1)) == 5
-    assert store.read("SELECT count(*) AS n FROM adjustments")["n"][0] == 5
+    # splits MAA/MAB/MAC (3) + dividends MAA(same day as split)/MAD/BRK.B (3); NAA not in symbols
+    assert n == 6
+    spl = store.read("SELECT * FROM splits ORDER BY symbol, date")
+    dv = store.read("SELECT * FROM dividends ORDER BY symbol, date")
+    assert spl.height == 3 and dv.height == 3
+    assert spl.filter(pl.col("symbol") == "MAB")["ratio"][0] == 0.1
+    assert set(spl["source"]) == {"polygon"} and set(dv["source"]) == {"polygon"}
+    assert "MAD" not in spl["symbol"].to_list()
+    # Mutation: writing both measures to one table / keying on (symbol,date) loses MAA's
+    # split or dividend -> one of these two assertions fails.
+    maa_s = spl.filter(pl.col("symbol") == "MAA").row(0, named=True)
+    maa_d = dv.filter(pl.col("symbol") == "MAA").row(0, named=True)
+    assert maa_s["ratio"] == 4.0 and maa_d["cash_amount"] == 0.25
+    assert maa_s["date"] == maa_d["date"]
+    # idempotent. Mutation: plain INSERT (no upsert) would double the counts.
+    assert ingest_polygon_actions(store, client, date(2026, 1, 1)) == 6
+    assert store.read("SELECT count(*) AS n FROM splits")["n"][0] == 3
+    assert store.read("SELECT count(*) AS n FROM dividends")["n"][0] == 3
+
+
+@respx.mock
+def test_actions_two_sources_both_persist(store, client):
+    """Mutation that fails this: keying upsert on ["symbol","date"] (drops source) -> the
+    pre-existing yfinance rows are overwritten by polygon and the count falls to 1 each."""
+    d = date(2026, 3, 2)
+    store.upsert(
+        "splits",
+        pl.DataFrame({"symbol": ["MAA"], "date": [d], "ratio": [4.0], "source": ["yfinance"]}),
+        ["symbol", "date", "source"],
+    )
+    store.upsert(
+        "dividends",
+        pl.DataFrame(
+            {"symbol": ["MAA"], "date": [d], "cash_amount": [0.25], "source": ["yfinance"]}
+        ),
+        ["symbol", "date", "source"],
+    )
+    respx.get(f"{BASE}/v3/reference/splits").respond(json={"status": "OK", "results": [
+        {"ticker": "MAA", "execution_date": d.isoformat(), "split_from": 1, "split_to": 4}]})
+    respx.get(f"{BASE}/v3/reference/dividends").respond(json={"status": "OK", "results": [
+        {"ticker": "MAA", "ex_dividend_date": d.isoformat(), "cash_amount": 0.25}]})
+    assert ingest_polygon_actions(store, client, date(2026, 1, 1)) == 2
+    sq = "SELECT source FROM splits WHERE symbol = 'MAA' ORDER BY source"
+    dq = "SELECT source FROM dividends WHERE symbol = 'MAA' ORDER BY source"
+    for q in (sq, dq):
+        assert store.read(q)["source"].to_list() == ["polygon", "yfinance"]
 
 
 def test_cli_requires_key(clean_env, tmp_path):
