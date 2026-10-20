@@ -12,7 +12,7 @@ mirror; the Work Order file is authoritative.
 | [WO-0001](WO-0001-repo-skeleton.md) | Repository skeleton, settings, logging, CLI, tooling, CI | — | P0-A | Approved |
 | [WO-0002](WO-0002-schema-and-store.md) | DuckDB schema, Store and ticker normalisation | WO-0001 | P0-B | Approved |
 | [WO-0003](WO-0003-universe-and-membership.md) | Universe and point-in-time membership (FMP client) | WO-0002 | P0-C | Approved |
-| [WO-0004](WO-0004-polygon-provider.md) | Polygon provider, ingest CLI, validation | WO-0002 | P0-C | Approved |
+| [WO-0004](WO-0004-polygon-provider.md) | Polygon provider, ingest CLI, validation (+ AMD-0018 delta: `bars_raw` never gated, jump rule repaired, `bar_flags`, `revalidate`) | WO-0002 | P0-C | Approved — delta pending |
 | [WO-0005](WO-0005-bootstrap-history.md) | Bootstrap history provider (yfinance) | WO-0002 | P0-C | Approved |
 | [WO-0006](WO-0006-fmp-calendars-events.md) | FMP calendars → events | WO-0003 | P0-D | Approved |
 | [WO-0007](WO-0007-adjust-and-materialise.md) | Adjustment and materialisation of `bars` | WO-0004, WO-0005 | P0-D | Approved |
@@ -25,15 +25,16 @@ mirror; the Work Order file is authoritative.
 |---|---|---|---|---|
 | [WO-0010](WO-0010-secret-drop-hardening.md) | Secret-drop hardening: ignore credential-shaped files, document the drop procedure | — | P0-A (independent of WO-0001) | Merged |
 | [WO-0011](WO-0011-actions-schema-correction.md) | Corporate-actions schema correction: `splits` and `dividends` (AMD-0012 defect fix) | — | P0-B2 | Merged (`02e4a2e`) |
-| [WO-0012](WO-0012-store-identity-and-vacuous-validation.md) | Store relocation safety and the vacuous-jump-rule defect (AMD-0017) | WO-0004 (file conflict on `validate.py`, not a logical dependency) | P0-D2 — may run with WO-0006/WO-0007 | Approved |
+| [WO-0012](WO-0012-store-identity-and-vacuous-validation.md) | Store relocation safety (AMD-0017 §2A; the `validate.py` half moved to WO-0004 by AMD-0018 §2G) | WO-0004 (`SCHEMA_VERSION` 4 after WO-0004's 3) | P0-D2 — may run with WO-0007 | Approved |
 
 Execution order for the Delivery Controller: **WO-0001 + WO-0010
 concurrently** (P0-A) → **WO-0002** (P0-B, merged `bdce04d`) →
 **WO-0003 + WO-0004 + WO-0005** concurrently (P0-C, all audited GREEN,
 deltas pending) → **WO-0011** (P0-B2, must merge before the WO-0004/0005
 deltas) → D (two concurrent) → E → F. Current order of work is set by
-AMD-0013 §3: WO-0011, then the WO-0003 delta, then the WO-0004/0005
-deltas, then P0-D.
+**AMD-0018 §3**: the WO-0004 delta and its re-run first (it blocks P0-D),
+then WO-0007 as soon as WO-0004 merges, with WO-0012 after it; then P0-E.
+WO-0003, WO-0005, WO-0006 and WO-0011 are merged.
 Base SHAs for dependent Work Orders are by-reference (`main at Closure of
 …`) and are resolved by the Delivery Controller when their dependencies
 close (DELIVERY-CHAIN §6.3). WO-0001's Base SHA was rebased by Architect

@@ -19,6 +19,7 @@ Adding or removing an entry is an Amendment.
 | CI-6 | Non-vacuity: any test relied on as proof of a behaviour must be shown capable of failing | Forge `EVIDENCE-DOCTRINE.md`; AMD-0011 AC7, AMD-0012 AC4 | A check that cannot fail is not a weak pass, it is not a pass. |
 | CI-7 | No secret, IP address, port, account identifier, gateway URL or model alias reaches the repository | `PID.md` §9, AMD-0001, AMD-0009, AMD-0015 §2C | Public repository; a published credential cannot be unpublished. |
 | CI-8 | Coverage travels with every aggregate: `n_members` and `n_members_with_bars`/`n_members_classified` per date, breadth never reported bare | AMD-0015 §2B, DESIGN §6.1 | This is the only thing keeping the known survivorship and classification gaps from becoming unstated optimism in every backtest. |
+| CI-9 | `bars_raw` is never filtered by a validation verdict: every row a provider returns is stored, and quality judgements are recorded separately in `ingest_log` and `bar_flags` | AMD-0018 §2A; DESIGN §3.3 | Gating the raw layer deletes the evidence a rejection has to be diagnosed from, makes a rule change cost a full re-fetch, and makes a validator's input depend on its own verdicts — which is how one real price move rejected 268 days. |
 
 Anything **not** on this list, where an acceptance criterion proves
 unachievable because of an external data fact, is handled by standing
