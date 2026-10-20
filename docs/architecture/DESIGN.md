@@ -98,7 +98,8 @@ ADR-0003 (data sources), ADR-0004 (model gateway), ADR-0005
 | Polygon `GET /v2/aggs/grouped/locale/us/market/stocks/{date}?adjusted=true` | primary nightly OHLCV, all US tickers | 1 call per trading day; ≈500 calls for the 2-year backfill | 5 calls/min; 2 years; EOD delayed |
 | Bootstrap (yfinance or Stooq) | one-off 10+ year adjusted bars for universe + ETFs | once | unofficial; validated before use |
 | IBKR paper gateway (`ib_async`) | reconciliation sample (20 symbols/night, rotating), corporate-action truth, IV30 for ETFs/index | nightly | ≈60 historical requests / 10 min |
-| FMP Basic | `historical-sp500-constituent`, `sp500-constituent`, `profile` (GICS sector + industry group), `earnings-calendar`, `dividends-calendar` | weekly constituents; daily calendars | 250 calls/day |
+| FMP Basic | `profile` (GICS sector + industry group, fallback only), `earnings-calendar`, `dividends-calendar`, `splits-calendar` | daily calendars | 250 calls/day; the constituent endpoints are **402 on this plan** — AMD-0013 |
+| Public constituents table + `hanshof` CSV | current members with `GICS Sector`, `GICS Sub-Industry`, `Date added`; membership history to 2025-08-23, with a documented derivation for the gap | weekly | no key; see AMD-0013 §2C for the gap routing and the `membership.source` precision values |
 | `hanshof/sp500_constituents` CSV (MIT) | cross-check of membership 1996→ | monthly | — |
 
 ### 3.2 Schema (DuckDB catalog; large tables are Parquet-backed)
