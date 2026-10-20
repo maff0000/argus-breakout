@@ -24,7 +24,8 @@ mirror; the Work Order file is authoritative.
 | WO | Title | Depends on | Group | Status |
 |---|---|---|---|---|
 | [WO-0010](WO-0010-secret-drop-hardening.md) | Secret-drop hardening: ignore credential-shaped files, document the drop procedure | — | P0-A (independent of WO-0001) | Merged |
-| [WO-0011](WO-0011-actions-schema-correction.md) | Corporate-actions schema correction: `splits` and `dividends` (AMD-0012 defect fix; WO-0002 is closed, so a new Work Order per DELIVERY-CHAIN §9) | — | P0-B2 — **blocks the WO-0004/WO-0005 deltas** | Approved |
+| [WO-0011](WO-0011-actions-schema-correction.md) | Corporate-actions schema correction: `splits` and `dividends` (AMD-0012 defect fix) | — | P0-B2 | Merged (`02e4a2e`) |
+| [WO-0012](WO-0012-store-identity-and-vacuous-validation.md) | Store relocation safety and the vacuous-jump-rule defect (AMD-0017) | WO-0004 (file conflict on `validate.py`, not a logical dependency) | P0-D2 — may run with WO-0006/WO-0007 | Approved |
 
 Execution order for the Delivery Controller: **WO-0001 + WO-0010
 concurrently** (P0-A) → **WO-0002** (P0-B, merged `bdce04d`) →

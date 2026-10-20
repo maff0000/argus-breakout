@@ -146,9 +146,27 @@ briefs         (date DATE, model TEXT, prompt_tokens INT, completion_tokens INT,
 reconcile_log  (date DATE, symbol TEXT, field TEXT, ours DOUBLE, theirs DOUBLE, pct_diff DOUBLE, breach BOOLEAN)
 ingest_log     (date DATE, source TEXT, rows INT, status TEXT, detail TEXT, finished_at TIMESTAMP)
 schema_version (version INT, applied_at TIMESTAMP)
+store_meta     (key TEXT PRIMARY KEY, value TEXT)
+                -- key 'store_dir' records the absolute directory the parquet views were built
+                -- against, so a relocated store is detected rather than silently misread (AMD-0017)
 ```
 
 ### 3.3 Rules
+- The Parquet-backed views bake an absolute glob at `init_schema()` time.
+  `store_meta['store_dir']` records the directory they were built against
+  and `Store.connect()` verifies it (AMD-0017): read-write recreates the
+  views against the current directory and logs the change; read-only raises
+  `StoreRelocatedError` naming both paths. A missing record means first
+  use, not relocation. Reading a store whose views point elsewhere is
+  prohibited — the dangerous mode returns **wrong** rows, not no rows.
+- Every validation rule that depends on prior state must distinguish
+  **applied-and-passed** from **could-not-be-applied** (AMD-0017, CI-6).
+  For the 25%-jump rule: on a date with any earlier row in `bars_raw`,
+  `prior_close` missing for more than 5% of that day's members **rejects**
+  the day with reason `jump rule inapplicable: prior_close missing for N of
+  M members`. `jump_rule_applied = False` is legitimate only on a genuine
+  first-ever ingest date, where it is recorded rather than counted as a
+  pass. Any later rule with a prior-state dependency inherits this.
 - Store bars as received (`bars_raw`, tagged with the source's adjustment
   `basis`) and corporate actions (`splits`, `dividends`) separately; `bars` is
   materialised from them by `argus/data/adjust.py`. Free sources deliver
@@ -408,7 +426,10 @@ stop 1.5·ATR14 (long) / 2·ATR14 (short); position cap 10% of equity; max
   parameterised.
 - Logging: structured JSON, secrets redacted, request ids; MCP access log
   retained 90 days. No PII stored.
-- Backups: nightly `store/` snapshot to a second disk.
+- Backups: nightly `store/` snapshot to a second disk. A restored or
+  relocated snapshot must be opened read-write once (`argus init-store`,
+  idempotent) so the Parquet views are rebuilt against their new path —
+  `Store.connect()` enforces this (AMD-0017).
 
 **Portability (ADR-0008, AMD-0004).** The application is built
 container-ready and packaged in PID-ARGUS-0006: no absolute paths in
