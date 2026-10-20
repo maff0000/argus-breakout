@@ -59,3 +59,7 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-20T11:16Z  WO-0005  PR Open  branch wo/0005-bootstrap-history; AC1 NOT MET (83.2% vs 98%, all failures delisted/renamed historical members); awaiting ARCHITECT RULING
 2026-10-20T12:24Z  WO-0005  Delta  AMD-0015 cohort split + skipped-cohort test; audited GREEN no findings at 70ce2d7; evidence docs/evidence/WO-0005/
 2026-10-20T12:24Z  WO-0005  Accepted  delegated acceptance (AMD-0010 2B, AMD-0015 3, AMD-0016); AC1a 100%, AC1b recorded; docs/evidence/WO-0005/acceptance.md
+2026-10-20T17:35Z  WO-0006  In Progress  Implementer dispatched; base 46086e6
+2026-10-20T19:27Z  WO-0006  Audited GREEN  pass 1 at 9d6e192, whole-branch pass 2 at 9a841b0; evidence docs/evidence/WO-0006/
+2026-10-20T19:27Z  WO-0006  Accepted  delegated acceptance; ruling 7 on AC1 coverage (39 of 518 = 7.5%), docs/evidence/WO-0006/spec-defects.md
+2026-10-20T19:27Z  WO-0006  Closed  merged via PR

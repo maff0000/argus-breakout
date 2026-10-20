@@ -1,0 +1,65 @@
+[
+ {
+  "symbol": "GE",
+  "date": "2026-10-20",
+  "epsActual": 2.25,
+  "epsEstimated": 2.01,
+  "revenueActual": 14118000000,
+  "revenueEstimated": 12877810000,
+  "lastUpdated": "2026-10-20"
+ },
+ {
+  "symbol": "GM",
+  "date": "2026-10-20",
+  "epsActual": 3.7,
+  "epsEstimated": 3.69,
+  "revenueActual": 50015000000,
+  "revenueEstimated": 48782980000,
+  "lastUpdated": "2026-10-20"
+ },
+ {
+  "symbol": "WMT",
+  "date": "2026-11-19",
+  "epsActual": null,
+  "epsEstimated": 0.637,
+  "revenueActual": null,
+  "revenueEstimated": 187295600000,
+  "lastUpdated": "2026-10-20"
+ },
+ {
+  "symbol": "NVDA",
+  "date": "2026-11-18",
+  "epsActual": null,
+  "epsEstimated": 2.49,
+  "revenueActual": null,
+  "revenueEstimated": 108817900000,
+  "lastUpdated": "2026-10-20"
+ },
+ {
+  "symbol": "TGT",
+  "date": "2026-11-18",
+  "epsActual": null,
+  "epsEstimated": 2.05,
+  "revenueActual": null,
+  "revenueEstimated": 26388160000,
+  "lastUpdated": "2026-10-20"
+ },
+ {
+  "symbol": "DOCU",
+  "date": "2026-12-03",
+  "epsActual": null,
+  "epsEstimated": 1.17,
+  "revenueActual": null,
+  "revenueEstimated": 889022600,
+  "lastUpdated": "2026-10-20"
+ },
+ {
+  "symbol": "BABA",
+  "date": "2026-11-24",
+  "epsActual": null,
+  "epsEstimated": 1.6,
+  "revenueActual": null,
+  "revenueEstimated": 40258910000,
+  "lastUpdated": "2026-10-20"
+ }
+]

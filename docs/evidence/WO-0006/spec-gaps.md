@@ -1,0 +1,11 @@
+# WO-0006 — Spec gaps and observations (for the Architect)
+
+1. **The FMP earnings calendar on this plan is a thin sample** (see `spec-defects.md`): 7.5% coverage of active symbols over 45 days; no bmo/amc. A complete schedule needs another source. Candidates not yet verified: per-symbol earnings dates from yfinance, Polygon financials/dates if the plan includes them, IBKR fundamental data via the paper gateway (WO-0008's path). A Work Order is needed; this is also a prerequisite for the Product Owner's earnings/breakout plan.
+2. **Unknown must stay unknown.** `days_to_earnings` is None when no date is stored. Any rule, filter or flag that reads it (DESIGN §7 "days_to_earnings shown and highlighted if ≤ 10", the playbooks) must treat None as "not known", never as "far away". Suggest an explicit `earnings_known` coverage field wherever the value is used.
+3. **`confirmed` semantics.** An earnings row is confirmed when actual EPS is present or its date is on or before today (WO §1: recently passed events are confirmed). Ex-dividend rows are always confirmed. Ratify or change.
+4. **Trading calendar.** Trading days are inferred from the dates present in `bars_raw` (weekdays elsewhere, flagged `approx`). Sparse bars understate counts with `approx=False`; a real exchange calendar (WO-0006 §2 does not provide one) would remove the inference.
+5. **Report extras beyond the WO's named fields:** `n_active_symbols`, `unavailable`, `n_earnings_with_time` (CI-8 coverage), and the `approx` column of `days_to_earnings` (required by WO §4).
+6. **Both-halves-unavailable exits 0** with ingest status `partial` and the halves named. Ratify or make it a failure.
+7. **FMP allowance.** Verification runs consume the shared 250-call/day allowance; this WO's own live run was delayed a day-part by earlier runs and by 429 retries (a retry counts against the budget).
+8. **Untested edge (audit survivor M12).** No test puts an earnings date exactly on the report day, so `days_since_earnings == 0` is unchecked (`bisect_right` vs `bisect_left` is not distinguished). One-line test to add in a later touch of this file.
+9. **WO §8 wording.** WO-0006 §8 describes a `time` field in the FMP earnings calendar; the recorded real payload has none. Suggest correcting the WO text.
