@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.7 (`universe refresh`), §8.8 ; `DESIGN.md` §3.1, §3.3 (GICS rule), §4 ; ADR-0003, ADR-0005 |
-| **Applicable Amendments** | AMD-0002, AMD-0004, AMD-0013, AMD-0014 |
+| **Applicable Amendments** | AMD-0002, AMD-0004, AMD-0013, AMD-0014, AMD-0015 |
 | **Base SHA** | main at Closure of WO-0002 |
 | **Branch** | `wo/0003-universe-and-membership` |
 | **Depends on** | WO-0002 |
@@ -56,7 +56,10 @@ config/ticker_renames.yaml           create  AMD-0014: `renames: [{old, new, eff
                                              live run (BNY, FISV, MRSH, SKYD, VMRK and their former tickers), `effective` filled where
                                              evidenced and null otherwise
 config/gics.yaml                     create  per PID §8.8: 11 sectors, 25 industry groups→sector, 163 sub-industries→group
-argus/commands/universe_cmds.py      create  `universe refresh [--date]` → universe.refresh(...); prints the UniverseReport; exit 1 if n_missing_group>0
+argus/commands/universe_cmds.py      create  `universe refresh [--date]` → universe.refresh(...); prints the UniverseReport; exit 1 if
+                                             n_missing_group>0; exit 1 if current_members_without_row>0 (AC9, unconditional — AMD-0015 §2A);
+                                             exit 2 if --date is more than 7 calendar days in the past, with a message that the current
+                                             constituents table has no historical snapshot so a back-dated refresh cannot be correct (AC10)
                                              (registers onto argus.commands.universe.app)
 argus/cli.py                         modify  add exactly one import line for argus.commands.universe_cmds in the append-only block (AMD-0002)
 tests/fixtures/universe/wikipedia_sp500.html      create  scrubbed static copy (≥490 rows)
@@ -78,7 +81,12 @@ PID §8.8, §8.9; ADR-0005; ADR-0008. `config/universe.yaml` and
 path relative to the package (AMD-0004). Industry group is mandatory: a symbol with
 no mapping goes through the FMP `profile` fallback; if still unmapped it
 is counted in `n_missing_group` and the command exits 1 — never a silent
-default. `FMPClient.historical_sp500_changes()` and `current_sp500()` must treat
+default. The current-membership invariant (AMD-0014 §2B) is computed against the
+**fetched current constituents table**, always, **independent of `--date`**
+(AMD-0015 §2A): it asserts that every symbol in the table just fetched has
+exactly one row with `end_date IS NULL`. It is a statement about rows
+existing, not about membership on a date, so it holds for every invocation.
+`FMPClient.historical_sp500_changes()` and `current_sp500()` must treat
 **402/403 as unavailable, not as failure** (AMD-0013): raise a typed
 `ProviderUnavailable(ProviderError)` that `refresh()` catches to fall
 through to the next route, logging the status code and never the key. A 402
@@ -115,7 +123,8 @@ with `gics_sector='ETF'`, `gics_industry_group='ETF'`, `active=true`.
 - **AC6** — Total FMP calls for one `universe refresh` ≤ 60 **and** the run completes successfully when every FMP endpoint returns 402 (AMD-0013). Operator check: run once with the real key and once with a key forced to 402; file both.
 - **AC7** — The membership report states the gap route used and the row count per `source` value. The `wikipedia-derived-bounded` count is reported and must not exceed 40; above that is a malfunction, not ordinary turnover, and is a stop (AMD-0013).
 - **AC8** — A 402 on any FMP endpoint does not abort `universe refresh` (test: `respx` returns 402 → refresh completes and records the next available route).
-- **AC9** — `UniverseReport` states `current_members_without_row` and that count is **0** (AMD-0014); non-zero is an acceptance failure, not a statistic. The report also states the row count per `source`, including `rename-mapped` and `rename-bounded`.
+- **AC9** — `UniverseReport` states `current_members_without_row` and that count is **0** (AMD-0014), **under every invocation including a back-dated one** (AMD-0015 §2A); non-zero exits non-zero and is an acceptance failure, not a statistic. The report also states the row count per `source`, including `rename-mapped` and `rename-bounded`.
+- **AC10** — `universe refresh --date <30 days ago>` exits **2** and writes nothing (operator check: exit status plus an unchanged store row count before/after); `--date` of today or the last trading day succeeds (AMD-0015 §2A).
 
 ## 7. Evidence the Delivery Controller must file
 `tests.md`, `auditor-prompt.md`, `audit.md`, `acceptance.md`,

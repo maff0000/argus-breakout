@@ -112,6 +112,11 @@ use that flag here. Instead:
    Record the mechanism and the check in
    `docs/evidence/WO-NNNN/tests.md`. Prefer running the dispatch on the
    host that holds the files and using no mount at all.
+3b. **Dispatch prompts name `dell-debian` and absolute paths — never an IP
+   address or port** (AMD-0015 §2C). The Auditor prompt is filed verbatim
+   by design, so redacting at filing time would corrupt the record; the
+   address must never be composed into the prompt in the first place, which
+   makes the verbatim filing clean by construction.
 4. When the Implementer reports, verify isolation held: its diff is in its
    worktree, `git -C /srv/argus-breakout status` is clean, the worktree's
    history is this project's.

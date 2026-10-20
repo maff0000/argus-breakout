@@ -195,7 +195,12 @@ schema_version (version INT, applied_at TIMESTAMP)
   Re-added symbols get a second interval; intervals for one symbol never
   overlap.
 - Composites are equal-weight, rebalanced daily, over members per
-  `membership` as of each date (no survivorship bias).
+  `membership` as of each date.
+- Bars coverage for **delisted** historical members is incomplete
+  (AMD-0015 §2B): the free source serves no data for a material share of
+  them, so point-in-time membership alone does not eliminate survivorship
+  bias. Every consumer of `composites` must carry coverage with the figure
+  it reports — see §6.1.
 
 ## 4. Universe and baselines
 - **Stocks:** S&P 500 members as of each date (currently ≈503 tickers).
@@ -254,6 +259,15 @@ universe and within sector (`<feature>_pct`, `<feature>_pct_sector`).
 ## 6. Market and sector layer — the rotation detector
 
 ### 6.1 Breadth (members of EQ_SPX)
+`composites` and every breadth field carry `n_members` **and**
+`n_members_with_bars` per date, and the equal-weight composite is computed
+over members with bars. A breadth percentage is reported alongside its
+coverage ratio, never bare. Where coverage on a date is below 95%, that
+date's breadth figures are flagged in `market_daily.coverage_flag` and
+excluded from PID-ARGUS-0004's lead-time study unless explicitly included.
+This is how the survivorship bias of §3.3 stays measurable per date instead
+of becoming an unstated optimism in every backtest (AMD-0015 §2B).
+
 `pct_above_20/50/200`; advance–decline line; `nh20−nl20`; `nh252−nl252`;
 McClellan oscillator = EMA19(r) − EMA39(r) with r = (adv−dec)/(adv+dec),
 and its summation; `% with rsi14 > 50`; `RSP/SPY` and its 20d slope.
