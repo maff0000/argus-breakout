@@ -1,7 +1,65 @@
 [
- {"symbol": "JPM", "date": "2026-10-14", "time": "bmo", "epsActual": 5.07, "epsEstimated": 4.84, "revenueActual": 46000000000, "revenueEstimated": 45000000000, "lastUpdated": "2026-10-14"},
- {"symbol": "AAPL", "date": "2026-10-29", "time": "amc", "epsActual": null, "epsEstimated": 1.78, "revenueActual": null, "revenueEstimated": 102000000000, "lastUpdated": "2026-10-01"},
- {"symbol": "XOM", "date": "2026-10-30", "time": "", "epsActual": null, "epsEstimated": 1.9, "revenueActual": null, "revenueEstimated": null, "lastUpdated": "2026-10-01"},
- {"symbol": "ZZZZ", "date": "2026-10-27", "time": "bmo", "epsActual": null, "epsEstimated": 0.12, "revenueActual": null, "revenueEstimated": null, "lastUpdated": "2026-10-01"},
- {"symbol": "QQQQ", "date": "2026-11-03", "time": null, "epsActual": null, "epsEstimated": null, "revenueActual": null, "revenueEstimated": null, "lastUpdated": "2026-10-01"}
+ {
+  "symbol": "GE",
+  "date": "2026-10-20",
+  "epsActual": 2.25,
+  "epsEstimated": 2.01,
+  "revenueActual": 14118000000,
+  "revenueEstimated": 12877810000,
+  "lastUpdated": "2026-10-20"
+ },
+ {
+  "symbol": "GM",
+  "date": "2026-10-20",
+  "epsActual": 3.7,
+  "epsEstimated": 3.69,
+  "revenueActual": 50015000000,
+  "revenueEstimated": 48782980000,
+  "lastUpdated": "2026-10-20"
+ },
+ {
+  "symbol": "WMT",
+  "date": "2026-11-19",
+  "epsActual": null,
+  "epsEstimated": 0.637,
+  "revenueActual": null,
+  "revenueEstimated": 187295600000,
+  "lastUpdated": "2026-10-20"
+ },
+ {
+  "symbol": "NVDA",
+  "date": "2026-11-18",
+  "epsActual": null,
+  "epsEstimated": 2.49,
+  "revenueActual": null,
+  "revenueEstimated": 108817900000,
+  "lastUpdated": "2026-10-20"
+ },
+ {
+  "symbol": "TGT",
+  "date": "2026-11-18",
+  "epsActual": null,
+  "epsEstimated": 2.05,
+  "revenueActual": null,
+  "revenueEstimated": 26388160000,
+  "lastUpdated": "2026-10-20"
+ },
+ {
+  "symbol": "DOCU",
+  "date": "2026-12-03",
+  "epsActual": null,
+  "epsEstimated": 1.17,
+  "revenueActual": null,
+  "revenueEstimated": 889022600,
+  "lastUpdated": "2026-10-20"
+ },
+ {
+  "symbol": "BABA",
+  "date": "2026-11-24",
+  "epsActual": null,
+  "epsEstimated": 1.6,
+  "revenueActual": null,
+  "revenueEstimated": 40258910000,
+  "lastUpdated": "2026-10-20"
+ }
 ]

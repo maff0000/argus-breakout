@@ -33,6 +33,8 @@ class EventsReport:
     n_active_symbols: int = 0
     # Calendars the plan did not serve (AMD-0013): a half that could not fire is named, not hidden.
     unavailable: tuple[str, ...] = field(default_factory=tuple)
+    # Earnings rows carrying bmo/amc; FMP may supply none, which must be visible (CI-8).
+    n_earnings_with_time: int = 0
 
 
 def _active_symbols(store: Store) -> set[str]:
@@ -66,6 +68,7 @@ def refresh_events(
 
     n_earnings = 0
     n_symbols = 0
+    n_with_time = 0
     if earnings is not None:
         e = earnings.filter(pl.col("symbol").is_in(sorted(active)))
         e = e.unique(subset=["symbol", "date"], keep="last", maintain_order=True)
@@ -78,6 +81,7 @@ def refresh_events(
             (pl.col("confirmed") | (pl.col("date") <= today)).alias("confirmed"),
         )
         n_earnings = store.upsert("events", out, ["symbol", "date", "type"])
+        n_with_time = int(out["time_of_day"].is_not_null().sum())
         n_symbols = e.filter(pl.col("date") >= today)["symbol"].n_unique()
 
     n_exdiv = 0
@@ -101,6 +105,7 @@ def refresh_events(
         calls_used=fmp.calls_today() - calls_before,
         n_active_symbols=len(active),
         unavailable=tuple(unavailable),
+        n_earnings_with_time=n_with_time,
     )
     log.info(
         "events_refreshed",
@@ -108,6 +113,7 @@ def refresh_events(
         n_exdiv=report.n_exdiv,
         n_symbols_with_upcoming_earnings=report.n_symbols_with_upcoming_earnings,
         n_active_symbols=report.n_active_symbols,
+        n_earnings_with_time=report.n_earnings_with_time,
         calls_used=report.calls_used,
         unavailable=list(report.unavailable),
     )

@@ -47,6 +47,9 @@ def refresh_cmd(
     )
     store.log_ingest(today, _SOURCE, report.n_earnings + report.n_exdiv, status, detail)
     typer.echo(f"earnings rows: {report.n_earnings}")
+    typer.echo(
+        f"time of day known for {report.n_earnings_with_time} of {report.n_earnings} earnings rows"
+    )
     typer.echo(f"ex-dividend rows: {report.n_exdiv}")
     typer.echo(
         "symbols with upcoming earnings: "
