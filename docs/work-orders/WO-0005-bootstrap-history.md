@@ -4,8 +4,8 @@
 |---|---|
 | **Status** | In Progress |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.6, §8.7 (`ingest bootstrap`) ; `DESIGN.md` §3.1, §3.3 ; ADR-0003 |
-| **Applicable Amendments** | AMD-0002, AMD-0012 |
-| **Base SHA** | 02e4a2e3065570a46f55349b524e60131d7de8a3 |
+| **Applicable Amendments** | AMD-0002, AMD-0012, AMD-0014 |
+| **Base SHA** | d0ea305 (main with AMD-0014; prior base 02e4a2e) |
 | **Branch** | `wo/0005-bootstrap-history` |
 | **Depends on** | WO-0002 |
 | **Parallel group** | P0-C (with WO-0003, WO-0004) |
@@ -34,7 +34,10 @@ argus/data/ingest_bootstrap.py       create  bootstrap_history(store, provider, 
                                                 writes per chunk; records ingest_log(source='yfinance') per chunk; writes non-null split rows to
                                                 `splits` and non-null dividend rows to `dividends`, each keyed ["symbol","date","source"] — AMD-0012)
                                              `ingest bootstrap` exits 0 when >= 98% of requested symbols were written and 1 otherwise,
-                                             reporting the failed list either way (AMD-0012)
+                                             reporting the failed list either way (AMD-0012). The threshold counts written AND
+                                             skipped symbols as successes; only symbols in `failed` count against it (AMD-0014 §2E) —
+                                             a skip means already complete, so counting skips as failures would make a fully
+                                             complete re-run exit 1
 argus/commands/ingest_bootstrap.py   create  `ingest bootstrap --start D [--end D] [--symbols S1,S2]` (registers onto argus.commands.ingest.app)
 argus/cli.py                         modify  add exactly one import line for argus.commands.ingest_bootstrap in the append-only block (AMD-0002)
 tests/fixtures/bootstrap/yf_download_sample.parquet   create  3 symbols × 60 days, yfinance-shaped multiindex flattened as the provider receives it

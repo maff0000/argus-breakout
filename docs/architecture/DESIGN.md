@@ -179,6 +179,17 @@ schema_version (version INT, applied_at TIMESTAMP)
   Polygon over yfinance — and records in `MaterialiseReport.warnings` any
   `(symbol, date)` where the sources disagree on a split ratio by more than
   0.1% or on a dividend by more than one cent.
+- **Every symbol in the current constituents table has exactly one open
+  membership interval** (`end_date IS NULL`) (AMD-0014). If it is in the
+  index today it is a current member; no derivation may leave it without a
+  row. `members_on(today)` must equal the current table's symbol count. A
+  shortfall is a failure, never a reported statistic.
+- A **ticker rename is one continuous membership under a changed symbol**,
+  never a removal plus an addition (AMD-0014). Pairs are read from
+  `config/ticker_renames.yaml`; the old interval closes the trading day
+  before the effective date (or at hanshof's last snapshot H when the date
+  is unknown) and the new interval opens immediately after, so no date
+  falls between them.
 - Membership intervals are **closed on both ends** (AMD-0011):
   `members_on(d)` is `start_date <= d AND (end_date IS NULL OR d <= end_date)`.
   Re-added symbols get a second interval; intervals for one symbol never
@@ -188,6 +199,8 @@ schema_version (version INT, applied_at TIMESTAMP)
 
 ## 4. Universe and baselines
 - **Stocks:** S&P 500 members as of each date (currently ≈503 tickers).
+  Ticker renames are mapped in `config/ticker_renames.yaml` so a company's
+  membership stays continuous across a symbol change (AMD-0014).
 - **Baselines:** `EQ_SPX` (computed equal-weight composite), `SPY`, `RSP`;
   11 sector composites `EQ_S_<GICS_SECTOR>` and 25 industry-group
   composites `EQ_IG_<GICS_INDUSTRY_GROUP>`; sector SPDRs (XLK XLF XLV XLY
