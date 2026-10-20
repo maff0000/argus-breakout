@@ -301,6 +301,27 @@ change (AMD-0005).
    and an Auditor's `scope_fidelity: no` raised solely on such an edit is
    **procedural and non-blocking**. Touching a test whose behaviour the
    Work Order does **not** change remains a stop.
+7. **Unachievable or inconsistent acceptance criterion (AMD-0016).** Where
+   an acceptance criterion cannot be met **because of an external data fact
+   rather than an implementation shortcoming**, and the honest response is
+   to measure and record rather than change behaviour, the Delivery
+   Controller may proceed. It must establish the cause with evidence (what
+   the source does and does not provide, with counts); report the shortfall
+   as a named figure beside the aggregate it affects, never bare; record it
+   in `docs/evidence/WO-NNNN/spec-defects.md` with the criterion quoted and
+   the achievable figure stated; and merge under the Work Order's
+   pre-committed acceptance. **Three hard guards — any one means stop:**
+   the criterion touches an entry in
+   `docs/governance/CRITICAL-INVARIANTS.md`; the fix would change
+   **behaviour** rather than reporting; or the shortfall would weaken a
+   non-vacuity requirement or make a check incapable of failing. This is
+   authority to proceed past a bad criterion of the Architect's, not to
+   lower a bar — a criterion that is merely *hard* to meet is not
+   unachievable.
+8. **Pre-authorisation scope is §2, never a file list (AMD-0016 §2A).** A
+   delta's bound is the Work Order's §2 Scope as verified by the Auditor's
+   `scope_fidelity`, plus evidence and clerical paths. Any "the diff
+   touches only …" file list in an earlier amendment is superseded.
 
 ## 10. Public repository rules
 

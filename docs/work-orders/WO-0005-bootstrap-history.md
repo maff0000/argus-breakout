@@ -4,8 +4,8 @@
 |---|---|
 | **Status** | PR Open |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.6, §8.7 (`ingest bootstrap`) ; `DESIGN.md` §3.1, §3.3 ; ADR-0003 |
-| **Applicable Amendments** | AMD-0002, AMD-0012, AMD-0014 |
-| **Base SHA** | d0ea305 (main with AMD-0014; prior base 02e4a2e) |
+| **Applicable Amendments** | AMD-0002, AMD-0012, AMD-0014, AMD-0015 |
+| **Base SHA** | 5e95343 (main with AMD-0016) |
 | **Branch** | `wo/0005-bootstrap-history` |
 | **Depends on** | WO-0002 |
 | **Parallel group** | P0-C (with WO-0003, WO-0004) |
@@ -29,7 +29,12 @@ argus/data/providers/bootstrap.py    create  class YFinanceProvider(pause_s: flo
                                                source="yfinance"; basis="split"
                                              yfinance is imported lazily inside methods; absence raises ProviderError("install extras: argus[bootstrap]")
 argus/data/ingest_bootstrap.py       create  bootstrap_history(store, provider, start, end, symbols: list[str] | None) -> BootstrapResult(
-                                               n_symbols, n_rows, failed: list[str], skipped: list[str])
+                                               n_symbols, n_rows, failed: list[str], skipped: list[str],
+                                               current_written: int, current_failed: list[str],
+                                               historical_written: int, historical_unavailable: list[str])   # AMD-0015 §2B
+                                               (the cohorts are: CURRENT = current members + configured ETFs; HISTORICAL = symbols appearing
+                                                only in historical membership. The exit rule applies to the CURRENT cohort only; historical
+                                                unavailability never sets a non-zero exit)
                                                (skips symbols already having ≥ 95% of expected rows in bars_raw[source='yfinance'] for the range;
                                                 writes per chunk; records ingest_log(source='yfinance') per chunk; writes non-null split rows to
                                                 `splits` and non-null dividend rows to `dividends`, each keyed ["symbol","date","source"] — AMD-0012)
@@ -72,7 +77,8 @@ no retries beyond one per chunk.
 | `test_ingest_bootstrap.py::test_failed_symbol_does_not_abort_run` | provider raising on one chunk → others written, symbol in `failed` | counts + list |
 
 ## 6. Acceptance criteria
-- **AC1** — On the host, `argus ingest bootstrap --start 2015-01-01` loads bars for ≥ 98% of symbols in `symbols` ∪ historical `membership` with `source='yfinance'`; failures listed (operator check: counts, failed list, wall time).
+- **AC1a** — Of symbols that are **current** members or configured ETFs, **≥ 99%** have bars written for the requested range (operator check: count, percentage, and an exception list with a reason per symbol). Below 99% is a delivery defect (AMD-0015 §2B).
+- **AC1b** — Of symbols appearing **only** in historical `membership`, coverage is **reported with no threshold**: count written, count unavailable, percentage, and the full unavailable list filed in `docs/evidence/WO-0005/delisted-coverage.md`. A shortfall here is a recorded limitation of the free source, not a failure — provided it is recorded (AMD-0015 §2B).
 - **AC2** — Every current member and ETF has ≥ 2,400 rows for 2015-01-01…2024-12-31 (operator check: query, exceptions listed with reason, e.g. IPO after 2015).
 - **AC3** — `splits` and `dividends` each contain rows with `source='yfinance'`, and a symbol with a same-date split and dividend retains both (operator check: counts per table) (AMD-0012).
 - **AC4** — Resumability and fault isolation (tests in §5).

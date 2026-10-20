@@ -40,9 +40,11 @@ THE IMPLEMENTER NEVER COMMITS. YOU REVIEW AND COMMIT EVERY DIFF.
    stop and report what is missing. Do not `git init`, do not write a PID.
 2. `git -C /srv/argus-breakout fetch origin && git -C /srv/argus-breakout status`.
    Establish truth from the repository, not from memory.
-3. Read, in this order: `PID.md`, `docs/governance/DELIVERY-CHAIN.md`, the
-   Phase PID named by the Work Order you are about to run, the Work Order
-   itself, and any Amendment it lists. Read `docs/evidence/DELIVERY-LOG.md`
+3. Read, in this order: `PID.md`, `docs/governance/DELIVERY-CHAIN.md`,
+   `docs/governance/CRITICAL-INVARIANTS.md`,
+   `docs/governance/ACCEPTED-RESIDUALS.md`, the Phase PID named by the Work
+   Order you are about to run, the Work Order itself, and any Amendment it
+   lists. Read `docs/evidence/DELIVERY-LOG.md`
    to see where the last session stopped.
 4. Confirm `gitleaks` is installed and `git config core.hooksPath` is
    `scripts/hooks`. If not, run `./ops/bootstrap`. Never use `--no-verify`.
@@ -112,6 +114,11 @@ use that flag here. Instead:
    Record the mechanism and the check in
    `docs/evidence/WO-NNNN/tests.md`. Prefer running the dispatch on the
    host that holds the files and using no mount at all.
+3b. **Dispatch prompts name `dell-debian` and absolute paths — never an IP
+   address or port** (AMD-0015 §2C). The Auditor prompt is filed verbatim
+   by design, so redacting at filing time would corrupt the record; the
+   address must never be composed into the prompt in the first place, which
+   makes the verbatim filing clean by construction.
 4. When the Implementer reports, verify isolation held: its diff is in its
    worktree, `git -C /srv/argus-breakout status` is clean, the worktree's
    history is this project's.
@@ -226,6 +233,24 @@ Awaiting: ARCHITECT ACCEPTANCE
    clerical and evidence writes under `docs/` are always permitted
    (DELIVERY-CHAIN §6.4). An Auditor flagging them is procedural, not
    blocking.
+7. **Unachievable or inconsistent acceptance criterion (AMD-0016).** Where
+   an acceptance criterion cannot be met **because of an external data fact
+   rather than an implementation shortcoming**, and the honest response is
+   to measure and record rather than change behaviour: establish the cause
+   with evidence and counts, report the shortfall as a named figure beside
+   the aggregate it affects (never bare), record it in
+   `docs/evidence/WO-NNNN/spec-defects.md` with the criterion quoted and
+   the achievable figure stated, and **merge under the Work Order's
+   pre-committed acceptance**. Three hard guards — any one means stop: the
+   criterion touches an entry in `docs/governance/CRITICAL-INVARIANTS.md`;
+   the fix would change **behaviour** rather than reporting; or the
+   shortfall would weaken a non-vacuity requirement. This is authority to
+   proceed past a bad criterion of the Architect's, not to lower a bar — a
+   criterion that is merely *hard* to meet is not unachievable.
+8. **A delta's scope bound is the Work Order's §2, never a file list**
+   (AMD-0016 §2A). Any "the diff touches only …" list in an earlier
+   amendment is superseded; §2 conformance plus evidence and clerical paths
+   is the condition, as verified by the Auditor's `scope_fidelity`.
 
 ## Stop conditions — return to the Architect, do not improvise
 
