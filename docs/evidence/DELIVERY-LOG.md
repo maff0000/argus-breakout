@@ -41,3 +41,6 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-20T07:45Z  WO-0011  Implemented  head 647e1aa930c385f754593ef38b03668514eca53c (Implementer diff reviewed and committed by DC; mechanicals green on host)
 2026-10-20T07:45Z  WO-0011  Audited GREEN  audited sha 647e1aa930c385f754593ef38b03668514eca53c; evidence docs/evidence/WO-0011/
 2026-10-20T07:45Z  WO-0011  PR Open  branch wo/0011-actions-schema-correction; awaiting ARCHITECT ACCEPTANCE
+2026-10-20T07:46Z  WO-0011  Accepted  delegated under AMD-0013 s3; audit GREEN, ACs filed
+2026-10-20T07:46Z  WO-0011  Merged  PR #4
+2026-10-20T07:46Z  WO-0011  Closed  evidence docs/evidence/WO-0011/
