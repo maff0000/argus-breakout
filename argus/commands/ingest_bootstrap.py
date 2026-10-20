@@ -11,7 +11,13 @@ from argus.data.providers.bootstrap import YFinanceProvider
 from argus.data.store import Store
 from argus.settings import get_settings
 
-MAX_FAILED_FRACTION = 0.02  # AC1: at least 98% of symbols must load
+MIN_WRITTEN_PERCENT = 98  # AC1 / AMD-0012: exit 0 only when >= 98% of requested symbols written
+
+
+def meets_threshold(written: int, failed: int) -> bool:
+    """True when written / (written + failed) >= 98% (integer arithmetic, no float edge)."""
+    total = written + failed
+    return total == 0 or written * 100 >= MIN_WRITTEN_PERCENT * total
 
 
 def _parse_date(value: str, option: str) -> date:
@@ -43,6 +49,5 @@ def bootstrap(
     )
     if result.failed:
         typer.echo("failed: " + ",".join(result.failed))
-    total = result.n_symbols + len(result.failed)
-    if total and len(result.failed) / total > MAX_FAILED_FRACTION:
+    if not meets_threshold(result.n_symbols, len(result.failed)):
         raise typer.Exit(1)

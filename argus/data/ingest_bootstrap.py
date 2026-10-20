@@ -1,9 +1,9 @@
 """Resumable bootstrap of >= 10 years of daily history (WO-0005, PID 8.6/8.7).
 
 Loads yfinance bars into `bars_raw` (source='yfinance', basis='split') and
-splits/dividends into `adjustments`. Safe to re-run: symbols that already hold
->= 95% of the expected rows are skipped, and a failing chunk is recorded in
-`failed` without aborting the run.
+splits into `splits` and dividends into `dividends` (AMD-0012). Safe to re-run:
+symbols that already hold >= 95% of the expected rows are skipped, and a failing chunk
+is recorded in `failed` without aborting the run.
 """
 
 from dataclasses import dataclass, field
@@ -115,12 +115,21 @@ def bootstrap_history(
             rows = store.write_bars_raw(raw)
         actions = actions.filter(pl.col("symbol").is_in(sorted(got)))
         if actions.height:
-            adj = actions.select("symbol", "date", "split_ratio", "cash_dividend").with_columns(
-                pl.col("split_ratio").cast(pl.Float64),
-                pl.col("cash_dividend").cast(pl.Float64),
-                pl.lit(provider.source).alias("source"),
+            src = pl.lit(provider.source).alias("source")
+            splits = (
+                actions.filter(pl.col("split_ratio").is_not_null())
+                .select("symbol", "date", pl.col("split_ratio").cast(pl.Float64).alias("ratio"))
+                .with_columns(src)
             )
-            store.upsert("adjustments", adj, ["symbol", "date"])
+            dividends = (
+                actions.filter(pl.col("cash_dividend").is_not_null())
+                .select(
+                    "symbol", "date", pl.col("cash_dividend").cast(pl.Float64).alias("cash_amount")
+                )
+                .with_columns(src)
+            )
+            store.upsert("splits", splits, ["symbol", "date", "source"])
+            store.upsert("dividends", dividends, ["symbol", "date", "source"])
         result.n_symbols += len(got)
         result.n_rows += rows
         detail = f"{label}: {len(got)} symbols, {actions.height} actions"
