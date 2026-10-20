@@ -1,56 +1,64 @@
-# WO-0005 — Audit record
+# WO-0005 — Audit record (four independent passes)
 
-Fresh Forge Auditor dispatches (never forks), ssh-only, detached audit worktree at the audited SHA, mutations on `mktemp` copies.
+All passes: fresh Forge Auditor dispatches (never forks), ssh-only, detached audit worktree at the audited SHA, mutations on `mktemp` copies. The earlier record is `audit-pass1-abdb1a2.md`.
 
 | Pass | Audited SHA | Scope | Verdict |
 |---|---|---|---|
-| 1 | `abdb1a2` | AMD-0012 delta: `splits`/`dividends`, integer 98% rule, resume rule | GREEN, no findings (resume rule shown non-vacuous in both directions; 0.95 value unpinned and `>=` vs `>` equivalent — observations) |
-| 2 | `2c5a8a2` | whole branch after AMD-0014 §2E: skipped symbols count as successes | **GREEN, no findings** |
+| 1 | `abdb1a2` | AMD-0012: `splits`/`dividends`, integer 98% rule, resume rule | GREEN, no findings |
+| 2 | `2c5a8a2` | AMD-0014 §2E: skipped symbols count as successes | GREEN, no findings |
+| 3 | `85c01e1` | AMD-0015 §2B: current / historical cohorts, exit rule on the current cohort | GREEN, **one finding** (test gap) |
+| 4 | `70ce2d7` | whole branch after the fix | **GREEN, no findings** |
 
-Pass-1 observation put to the Architect and **ruled in AMD-0014 §2E**: the exit denominator excluded skipped symbols (a run of 10 written / 600 skipped / 5 failed evaluated 10/15 and exited 1). Fixed in `2c5a8a2`.
+## Pass 3 finding (fixed in `70ce2d7`)
+> Test gap on skipped-symbol classification. `cur = current_cohort(store, result.skipped)` in argus/commands/ingest_bootstrap.py is not covered by any test that can fail. Mutation M5 (`cur = set(result.skipped)`, every skip treated as current) leaves all 40 tests green… Under M5 skipped historical symbols would be counted as current successes… which could mask a current-cohort shortfall. The shipped code is correct… Per CI-6, proof of this behaviour is missing.
 
-## Pass 2 verdict block (as returned)
+Fix: `test_cli_rerun_classifies_skipped_symbols_by_cohort` (real store, CLI re-run that skips a current AND an inactive-historical symbol with an unavailable historical symbol present; asserts `current: written=0 skipped=1 failed=0 (100.0%)`, `historical: written=0 skipped=1 unavailable=1 (50.0%)`, `historical unavailable: HIST1`, exit 0).
+The Implementer showed M5 now fails 1 test (baseline 41 passed); the pass-4 Auditor reproduced it.
+
+## Pass 4 verdict block (as returned)
 ```
 AUDIT_VERDICT: GREEN
 work_order: WO-0005
-base_sha: d0ea305
-commit_sha: 2c5a8a2bbd14b6db16d13a26beb7ba53e1b9b144
-scope_fidelity: yes (9 paths changed: 5 source/test paths + 2 fixtures + cli.py one-line import, all within §2; other paths are DELIVERY-LOG and the WO clerical fields)
-offline_tests_pass: yes (74 passed normally; 74 passed again under `unshare -rn`; no .env present)
-non_vacuity_established: yes
-gitleaks_clean: yes (61 commits scanned, no leaks)
+base_sha: 5e95343
+commit_sha: 70ce2d765a4c2c671f5be6402961eda7f7b7f75e
+scope_fidelity: yes (all 15 changed paths inside WO-0005 §2, or DC-authored docs/evidence and clerical WO fields)
+offline_tests_pass: yes (83 passed plain; 83 passed under `unshare -rn`; no .env present; ruff check clean)
+non_vacuity_established: yes (M5 and all 7 requested mutants fail)
+gitleaks_clean: yes (71 commits scanned, no leaks found)
 access_mechanism: ssh
 write_visibility_verified: n/a (local to execution host)
 public_hygiene_clean: yes
-commit_identity_clean: yes
-AC1_verified: yes for the code path only (CLI exit rule and bulk load are covered by tests; the host-run operator check is the DC's)
-AC2_verified: no — operator check (2,400 rows per symbol on the live host); not a code defect
-AC3_verified: yes for the code path (both tables written with source='yfinance'; same-date split and dividend both retained)
-AC4_verified: yes
+commit_identity_clean: yes (5e95343..70ce2d7: one identity, Rogue (Delivery Controller) <noreply@anthropic.com>)
+AC1a_verified: yes   AC1b_verified: yes   AC2_verified: yes (operator check)   AC3_verified: yes   AC4_verified: yes
 findings: none
 confidence: high
 ```
-Out-of-scope observations: (1) `ruff format --check` lists 7 files, 2 added by this branch (`providers/bootstrap.py`, `tests/test_ingest_bootstrap.py`) and 5 pre-existing (the gate is `ruff check`, clean);
-(2) `YFinanceProvider.daily_bars` and `.actions` each call `yf.download` for the same chunk, so every chunk downloads twice (matches the §2 interface; an efficiency point).
 
-## Exit-code behaviour (real CLI, `bootstrap_history` mocked) — AMD-0014 §2E
-| (written, skipped, failed) | exit |
+### Mutants (pass 4, mktemp copies of 70ce2d7; baseline 83 passed)
+| Mutant | Result |
 |---|---|
-| (10, 600, 5) | 0 |
-| (0, 98, 2) | 0 |
-| (0, 97, 3) | 1 |
-| (0, 50, 0) fully skipped re-run | 0 |
-| (0, 0, 0) | 0 |
-| (98, 0, 2) | 0 |
-| (97, 0, 3) | 1 |
-| (5, 0, 0) | 0 |
-| (0, 0, 1) | 1 |
+| M5 every skip classified as current in the command | KILLED — `test_cli_rerun_classifies_skipped_symbols_by_cohort` only |
+| historical failures counted against the exit rule | KILLED (4) |
+| current cohort ignored in the exit rule | KILLED (9) |
+| everything classified as current — in the command / in the run / in `current_cohort` | KILLED (1 / 7 / 7) |
+| `active` filter dropped from `current_cohort` | KILLED (4) |
+| skips not counted as successes | KILLED (5) |
+| `>=` -> `>` in `meets_threshold` | KILLED (5) |
+| resume threshold removed / `COVERAGE_THRESHOLD = 0.0` | KILLED (1 / 1) |
+| `r["n"] >= need` -> `r["n"] > need` in `_covered` | survived — equivalent on the fixture (need = 55.1, not an integer); observation |
 
-**Which the implementation does (AMD-0014 §2E asked for confirmation):** before `2c5a8a2` it did **not** count skips — it evaluated `written / (written + failed)`; after, `(written + skipped) / (written + skipped + failed)` in integer arithmetic.
+### Exit-code behaviour through the real CLI (pass 3, driver outside the worktree)
+| Scenario | Exit |
+|---|---|
+| current 100/100, historical 100% unavailable | 0 |
+| current 97/100, historical perfect | 1 |
+| current 98/100 (boundary) | 0 |
+| empty current cohort | 0 (`n/a`) |
+| unknown `--symbols` (data returned) | 0, filed as historical |
+| re-run, everything skipped | 0 |
+| `BOTH` active+member no data, ETF ok, `ONLYM` membership-only no data | 1; `current failed: BOTH`, `historical unavailable: ONLYM` |
 
-## Non-vacuity (copies under mktemp)
-- Revert the §2E fix: 3 failed (`[10-600-5-0]`, `[0-98-2-0]`, `[50-48-2-0]`); the other cases are negative controls.
-- Disable the skip logic: `test_resumable_skips_complete_symbols`, `test_resume_skips_symbol_with_complete_data` fail.
-- Over-skip (ignore the 95% threshold): `test_resume_does_not_skip_symbol_with_incomplete_data` fails.
-- Stop writing `splits`: `test_loads_bars_actions_and_log`, `test_same_date_split_and_dividend_retain_both` fail.
-- Collapse dividends to one row per symbol: `test_loads_bars_actions_and_log` fails.
+### Observations (none blocking)
+1. The resume threshold is relative to the whole requested range, so a symbol listed after the range start (IPO, or a delisted symbol that ended early) can never reach 95% and is re-downloaded on every run. Idempotent; costs only a repeat download; never a wrong number or exit. A per-symbol floor would be a spec change. (Live: 45 current + 29 historical symbols re-written on a resume re-run.)
+2. A typo in `--symbols` exits 0 (filed as historical) — by design under AMD-0015 §2B.
+3. `ruff format --check` lists files the branch did not touch; the gate is `ruff check`.

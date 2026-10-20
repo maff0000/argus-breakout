@@ -47,3 +47,5 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-20T07:46Z  WO-0011  Closed  evidence docs/evidence/WO-0011/
 2026-10-20T11:16Z  WO-0005  Audited GREEN  audited sha 2c5a8a2 (AMD-0014 2E delta); evidence docs/evidence/WO-0005/
 2026-10-20T11:16Z  WO-0005  PR Open  branch wo/0005-bootstrap-history; AC1 NOT MET (83.2% vs 98%, all failures delisted/renamed historical members); awaiting ARCHITECT RULING
+2026-10-20T12:24Z  WO-0005  Delta  AMD-0015 cohort split + skipped-cohort test; audited GREEN no findings at 70ce2d7; evidence docs/evidence/WO-0005/
+2026-10-20T12:24Z  WO-0005  Accepted  delegated acceptance (AMD-0010 2B, AMD-0015 3, AMD-0016); AC1a 100%, AC1b recorded; docs/evidence/WO-0005/acceptance.md
