@@ -167,8 +167,12 @@ schema_version (version INT, applied_at TIMESTAMP)
   `BRK/B`) are mapped in `argus/data/tickers.py` at every boundary.
 - Nightly validation (`argus/data/validate.py`): a day is **rejected** (not
   published to `bars`) if < 95% of active members have a bar; if any close
-  moves > 25% vs prior close with no split in `splits`; if volume is
-  zero for > 2% of members; if any member lacks `gics_industry_group`.
+  moves > 25% vs prior close with no split in `splits`; if volume is zero for > 2% of members. The classification check applies to
+  **current members only** (AMD-0016 §2C): a historical-only member without
+  an industry group never rejects a day — `validate_day` returns
+  `n_unclassified_members` and the day is stored. Rejecting on historical
+  classification was miscalibrated; it rejected every day before hanshof's
+  last snapshot.
   Rejection is logged to `ingest_log` and surfaced in the report.
 - Reconciliation: 20 rotating members per night vs IBKR `ADJUSTED_LAST`
   daily bars; tolerance 0.1% on close, 10% on volume; breaches written to
@@ -204,8 +208,18 @@ schema_version (version INT, applied_at TIMESTAMP)
 
 ## 4. Universe and baselines
 - **Stocks:** S&P 500 members as of each date (currently ≈503 tickers).
-  Ticker renames are mapped in `config/ticker_renames.yaml` so a company's
+    Ticker renames are mapped in `config/ticker_renames.yaml` so a company's
   membership stays continuous across a symbol change (AMD-0014).
+  `symbols` covers **every** symbol that ever appears in `membership`, not
+  only current members; a historical-only symbol takes its classification
+  from the rename target's group where mapped, else FMP `profile`, else
+  NULL and counted (AMD-0016 §2C).
+  **Bars lookup follows the rename chain forward** to the current symbol
+  via `Store.resolve_symbol(symbol, as_of)`, because the free sources serve
+  a renamed company's whole history under its new ticker. Membership keeps
+  the historically correct ticker; only the lookup is redirected, and the
+  redirection is recorded. An unmapped chain counts as `without bars` in
+  §6.1's coverage rather than dropping out silently (AMD-0016 §2D).
 - **Baselines:** `EQ_SPX` (computed equal-weight composite), `SPY`, `RSP`;
   11 sector composites `EQ_S_<GICS_SECTOR>` and 25 industry-group
   composites `EQ_IG_<GICS_INDUSTRY_GROUP>`; sector SPDRs (XLK XLF XLV XLY
@@ -259,14 +273,17 @@ universe and within sector (`<feature>_pct`, `<feature>_pct_sector`).
 ## 6. Market and sector layer — the rotation detector
 
 ### 6.1 Breadth (members of EQ_SPX)
-`composites` and every breadth field carry `n_members` **and**
-`n_members_with_bars` per date, and the equal-weight composite is computed
+`composites` and every breadth field carry `n_members`,
+`n_members_with_bars` **and** `n_members_classified` per date, and the equal-weight composite is computed
 over members with bars. A breadth percentage is reported alongside its
 coverage ratio, never bare. Where coverage on a date is below 95%, that
 date's breadth figures are flagged in `market_daily.coverage_flag` and
 excluded from PID-ARGUS-0004's lead-time study unless explicitly included.
-This is how the survivorship bias of §3.3 stays measurable per date instead
-of becoming an unstated optimism in every backtest (AMD-0015 §2B).
+A sector or industry-group composite is computed over **classified**
+members only and reports its classification coverage with it (AMD-0016
+§2C). This is how the survivorship and classification gaps of §3.3 stay
+measurable per date instead of becoming unstated optimism in every
+backtest (AMD-0015 §2B, CI-8).
 
 `pct_above_20/50/200`; advance–decline line; `nh20−nl20`; `nh252−nl252`;
 McClellan oscillator = EMA19(r) − EMA39(r) with r = (adv−dec)/(adv+dec),

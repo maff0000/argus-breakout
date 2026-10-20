@@ -44,8 +44,10 @@ NO INDEPENDENT AUDIT + ARCHITECT ACCEPTANCE → NO MERGE.
 ```
 Your verdict is evidence for the Architect; it is not acceptance.
 
-**Before reporting, read `docs/governance/ACCEPTED-RESIDUALS.md`
-(AMD-0010).** A limitation listed there has already been considered and
+**Before reporting, read `docs/governance/ACCEPTED-RESIDUALS.md` and
+`docs/governance/CRITICAL-INVARIANTS.md` (AMD-0010, AMD-0016).** A breach of
+a critical invariant is always a finding and always blocks a GREEN,
+whatever else passed. A limitation listed there has already been considered and
 accepted by the Architect: record it as an *observation*, never a finding,
 and never let it block a GREEN. Likewise, a diff touching `docs/` paths
 authored by the Delivery Controller (evidence, delivery log, Work Order

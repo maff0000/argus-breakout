@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.7 (`universe refresh`), §8.8 ; `DESIGN.md` §3.1, §3.3 (GICS rule), §4 ; ADR-0003, ADR-0005 |
-| **Applicable Amendments** | AMD-0002, AMD-0004, AMD-0013, AMD-0014, AMD-0015 |
+| **Applicable Amendments** | AMD-0002, AMD-0004, AMD-0013, AMD-0014, AMD-0015, AMD-0016 |
 | **Base SHA** | main at Closure of WO-0002 |
 | **Branch** | `wo/0003-universe-and-membership` |
 | **Depends on** | WO-0002 |
@@ -49,6 +49,9 @@ argus/data/universe.py               create  fetch_wikipedia_constituents(http) 
                                                recorded). A mapped old ticker is REMOVED from the bounded-removal set — it did not leave the
                                                index. No date may fall between a pair's two intervals.)
                                              map_industry_group(sub_industry, gics_yaml) -> str  (raise on unknown)
+                                             (AMD-0016 §2C: `symbols` is populated for EVERY symbol appearing in `membership`, not only
+                                               current members. A historical-only symbol takes its classification from the rename target's
+                                               group where mapped, else FMP `profile`, else NULL and counted in n_unclassified.)
                                              refresh(store, settings, http) -> UniverseReport(dataclass: n_symbols, n_members_today,
                                                n_missing_group, membership_rows, sources_used)
 config/universe.yaml                 create  per PID §8.8 (benchmarks, sector_etfs, ratio_pairs, overlay_watchlist: [])
