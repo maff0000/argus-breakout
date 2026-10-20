@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.6, §8.7 (`ingest bootstrap`) ; `DESIGN.md` §3.1, §3.3 ; ADR-0003 |
-| **Applicable Amendments** | AMD-0002 |
+| **Applicable Amendments** | AMD-0002, AMD-0012 |
 | **Base SHA** | main at Closure of WO-0002 |
 | **Branch** | `wo/0005-bootstrap-history` |
 | **Depends on** | WO-0002 |
@@ -17,7 +17,7 @@
 A one-off, resumable bootstrap that loads ≥ 10 years of daily bars for
 every symbol in `symbols` (members, historical members in `membership`,
 and ETFs) into `bars_raw` with `source='yfinance'`, `basis='split'`, and
-their split/dividend actions into `adjustments`, so that later phases can
+their split and dividend actions into `splits` and `dividends` (AMD-0012), so that later phases can
 backtest to 2015 or earlier.
 
 ## 2. Scope (exhaustive)
@@ -31,7 +31,10 @@ argus/data/providers/bootstrap.py    create  class YFinanceProvider(pause_s: flo
 argus/data/ingest_bootstrap.py       create  bootstrap_history(store, provider, start, end, symbols: list[str] | None) -> BootstrapResult(
                                                n_symbols, n_rows, failed: list[str], skipped: list[str])
                                                (skips symbols already having ≥ 95% of expected rows in bars_raw[source='yfinance'] for the range;
-                                                writes per chunk; records ingest_log(source='yfinance') per chunk)
+                                                writes per chunk; records ingest_log(source='yfinance') per chunk; writes non-null split rows to
+                                                `splits` and non-null dividend rows to `dividends`, each keyed ["symbol","date","source"] — AMD-0012)
+                                             `ingest bootstrap` exits 0 when >= 98% of requested symbols were written and 1 otherwise,
+                                             reporting the failed list either way (AMD-0012)
 argus/commands/ingest_bootstrap.py   create  `ingest bootstrap --start D [--end D] [--symbols S1,S2]` (registers onto argus.commands.ingest.app)
 argus/cli.py                         modify  add exactly one import line for argus.commands.ingest_bootstrap in the append-only block (AMD-0002)
 tests/fixtures/bootstrap/yf_download_sample.parquet   create  3 symbols × 60 days, yfinance-shaped multiindex flattened as the provider receives it
@@ -50,7 +53,7 @@ missing symbols and renamed columns without crashing the whole run: a
 failing symbol is recorded in `failed` and the run continues. Store
 `adj_close` from yfinance's `Adj Close` as a column of `bars_raw`? **No** —
 `bars_raw` has no such column; instead write the dividend series into
-`adjustments` and let WO-0007 compute `adj_close`. Ticker conversion via
+the `dividends` table (AMD-0012) and let WO-0007 compute `adj_close`. Ticker conversion via
 `argus.data.tickers.to_provider(sym, "yfinance")` and
 `normalize(..., "yfinance")` (delivered by WO-0002). Chunked download with a pause to stay polite;
 no retries beyond one per chunk.
@@ -68,7 +71,7 @@ no retries beyond one per chunk.
 ## 6. Acceptance criteria
 - **AC1** — On the host, `argus ingest bootstrap --start 2015-01-01` loads bars for ≥ 98% of symbols in `symbols` ∪ historical `membership` with `source='yfinance'`; failures listed (operator check: counts, failed list, wall time).
 - **AC2** — Every current member and ETF has ≥ 2,400 rows for 2015-01-01…2024-12-31 (operator check: query, exceptions listed with reason, e.g. IPO after 2015).
-- **AC3** — `adjustments` contains split and dividend rows with `source='yfinance'` (operator check: counts).
+- **AC3** — `splits` and `dividends` each contain rows with `source='yfinance'`, and a symbol with a same-date split and dividend retains both (operator check: counts per table) (AMD-0012).
 - **AC4** — Resumability and fault isolation (tests in §5).
 
 ## 7. Evidence the Delivery Controller must file

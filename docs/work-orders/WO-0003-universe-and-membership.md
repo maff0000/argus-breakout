@@ -4,8 +4,8 @@
 |---|---|
 | **Status** | In Progress |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.7 (`universe refresh`), §8.8 ; `DESIGN.md` §3.1, §3.3 (GICS rule), §4 ; ADR-0003, ADR-0005 |
-| **Applicable Amendments** | AMD-0002, AMD-0004 |
-| **Base SHA** | bdce04d5b20fa6c31880ed0b13655972a3540b38 |
+| **Applicable Amendments** | AMD-0002, AMD-0004, AMD-0013 |
+| **Base SHA** | 19d9ca0ee0a441a1f74cd9030e18f2f94fecf517 |
 | **Branch** | `wo/0003-universe-and-membership` |
 | **Depends on** | WO-0002 |
 | **Parallel group** | P0-C (with WO-0004, WO-0005) |
@@ -34,8 +34,14 @@ argus/data/providers/fmp.py          create  class FMPClient(api_key: SecretStr,
 argus/data/universe.py               create  fetch_wikipedia_constituents(http) -> pl.DataFrame[symbol,name,gics_sector,gics_sub_industry]
                                                (parses the "List of S&P 500 companies" table; validates ≥490 rows and 11 sectors)
                                              load_hanshof_csv(path_or_url) -> pl.DataFrame[date, symbols:list]
-                                             build_membership(hanshof, fmp_changes, start=date(2015,1,1)) -> pl.DataFrame[symbol,start_date,end_date,source]
-                                               (hanshof is primary; FMP changes fill gaps after hanshof's last date; intervals merged)
+                                             build_membership(hanshof, current_table, fmp_changes_or_None, start=date(2015,1,1))
+                                               -> pl.DataFrame[symbol,start_date,end_date,source]   (AMD-0013 §2C routing:
+                                               hanshof to its last snapshot H; then the gap H->today by the first AVAILABLE route —
+                                               (a) FMP historical changes if 200, (b) a changes table on the constituents page if present,
+                                               (c) derivation: additions = current rows with `Date added` > H (exact, source
+                                               'wikipedia-derived-exact'); removals = in hanshof@H but absent from current (end_date = H,
+                                               source 'wikipedia-derived-bounded', bound recorded). Report which route was used.)
+                                               (hanshof is primary; the gap after hanshof's last date is filled per AMD-0013 §2C; intervals merged; membership.source carries the PRECISION of each row)
                                              map_industry_group(sub_industry, gics_yaml) -> str  (raise on unknown)
                                              refresh(store, settings, http) -> UniverseReport(dataclass: n_symbols, n_members_today,
                                                n_missing_group, membership_rows, sources_used)
@@ -63,8 +69,12 @@ PID §8.8, §8.9; ADR-0005; ADR-0008. `config/universe.yaml` and
 path relative to the package (AMD-0004). Industry group is mandatory: a symbol with
 no mapping goes through the FMP `profile` fallback; if still unmapped it
 is counted in `n_missing_group` and the command exits 1 — never a silent
-default. The FMP api key is only ever a query parameter added inside
-`FMPClient.get`; it must not appear in logs (the logging redactor covers
+default. `FMPClient.historical_sp500_changes()` and `current_sp500()` must treat
+**402/403 as unavailable, not as failure** (AMD-0013): raise a typed
+`ProviderUnavailable(ProviderError)` that `refresh()` catches to fall
+through to the next route, logging the status code and never the key. A 402
+must not abort `universe refresh`. The FMP api key is only ever a query
+parameter added inside `FMPClient.get`; it must not appear in logs (the logging redactor covers
 `apikey=`; also strip it from any exception message). Wikipedia fetch is
 one HTTP GET with a fixed URL constant and a 20 s timeout; parsing uses
 the standard library (`html.parser`) or `polars`/`pyarrow` only — no new
@@ -77,7 +87,9 @@ with `gics_sector='ETF'`, `gics_industry_group='ETF'`, `active=true`.
 | `test_universe.py::test_wikipedia_parse_counts` | fixture yields ≥490 rows, 11 sectors, no empty sub_industry | count assertions |
 | `test_universe.py::test_gics_yaml_integrity` | 11 sectors, 25 groups each mapping to a listed sector, 163 sub-industries each mapping to a listed group | counts + referential checks |
 | `test_universe.py::test_membership_intervals` | from the hanshof sample, a symbol removed on date D has `end_date = D - 1 trading day`; re-added symbols get a second interval | exact dates |
-| `test_universe.py::test_fmp_fills_gap_after_hanshof` | a change dated after hanshof's last date appears as an interval from FMP with `source='fmp'` | presence + source |
+| `test_universe.py::test_fmp_fills_gap_after_hanshof` | with FMP returning 200, a change dated after hanshof's last date appears as an interval with `source='fmp'` | presence + source |
+| `test_universe.py::test_gap_derivation_when_fmp_402` | with FMP returning 402: additions after H appear with `source='wikipedia-derived-exact'` and the exact `Date added`; a symbol in hanshof@H absent from the current table gets `end_date = H` and `source='wikipedia-derived-bounded'`; the report names route (c) (AMD-0013) | exact dates + source values + route |
+| `test_universe.py::test_402_does_not_abort_refresh` | a 402 from any FMP endpoint leaves `refresh()` completing (AC8) | no raise; report populated |
 | `test_universe.py::test_missing_group_exits_nonzero` | a fixture row with unknown sub-industry and failing profile fallback → exit code 1 | CliRunner exit code |
 | `test_fmp_client.py::test_budget_enforced` | 201st call in a day raises `ProviderError` (budget=200) | counter persisted via Store |
 | `test_fmp_client.py::test_key_not_in_logs_or_errors` | a 500 response's raised error and log lines contain no `apikey` value | string assertions on captured output |
@@ -88,7 +100,9 @@ with `gics_sector='ETF'`, `gics_industry_group='ETF'`, `active=true`.
 - **AC3** — `config/gics.yaml` passes test_gics_yaml_integrity.
 - **AC4** — Every symbol written passes `tickers.is_valid` (Auditor: query `symbols` for non-matching rows = 0).
 - **AC5** — FMP daily budget enforced; key never logged (tests).
-- **AC6** — Total FMP calls used by one `universe refresh` ≤ 60 (operator check: `ingest_log` counter).
+- **AC6** — Total FMP calls for one `universe refresh` ≤ 60 **and** the run completes successfully when every FMP endpoint returns 402 (AMD-0013). Operator check: run once with the real key and once with a key forced to 402; file both.
+- **AC7** — The membership report states the gap route used and the row count per `source` value. The `wikipedia-derived-bounded` count is reported and must not exceed 40; above that is a malfunction, not ordinary turnover, and is a stop (AMD-0013).
+- **AC8** — A 402 on any FMP endpoint does not abort `universe refresh` (test: `respx` returns 402 → refresh completes and records the next available route).
 
 ## 7. Evidence the Delivery Controller must file
 `tests.md`, `auditor-prompt.md`, `audit.md`, `acceptance.md`,
