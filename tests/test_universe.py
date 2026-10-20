@@ -46,7 +46,30 @@ FIX = TESTS / "fixtures"
 CONFIG = TESTS.parent / "config"
 WIKI_HTML = (FIX / "universe" / "wikipedia_sp500.html").read_text(encoding="utf-8")
 HANSHOF_SAMPLE = FIX / "universe" / "hanshof_sample.csv"
-CHANGES_TABLE = (FIX / "universe" / "wikipedia_changes_table.html").read_text(encoding="utf-8")
+_CHG_HEAD = (
+    '<table class="wikitable sortable" id="changes">\n'
+    '<tr><th rowspan="2">Date</th><th colspan="2">Added</th><th colspan="2">Removed</th>'
+    '<th rowspan="2">Reason</th></tr>\n'
+    "<tr><th>Ticker</th><th>Security</th><th>Ticker</th><th>Security</th></tr>\n"
+)
+_CHG_ROWS = (
+    ("September 22, 2025", '<a href="#">APP</a>', "AppLovin", "MKTX", "MarketAxess", "scrubbed"),
+    (
+        "September 22, 2025", '<a href="#">HOOD</a>', "Robinhood Markets", "CZR", "Caesars",
+        "scrubbed",
+    ),
+    ("September 22, 2025", '<a href="#">EME</a>', "Emcor", "LKQ", "LKQ Corp", "scrubbed"),
+    (
+        "August 28, 2025", '<a href="#">IBKR</a>', "Interactive Brokers", "WBA", "Walgreens",
+        "scrubbed",
+    ),
+    ("August 1, 2025", "", "", "OLDX", "Pre-gap removal", "ignored: before H"),
+)
+CHANGES_TABLE = (  # inlined from the former wikipedia_changes_table.html fixture (WO-0003 2)
+    _CHG_HEAD
+    + "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>\n" for r in _CHG_ROWS)
+    + "</table>\n"
+)
 HISTORICAL = json.loads((FIX / "fmp" / "historical_sp500.json").read_text())
 CURRENT = json.loads((FIX / "fmp" / "sp500_constituent.json").read_text())
 
@@ -1055,6 +1078,23 @@ def _recent_change_sources(*, fmp: bool):
     return html, history, current
 
 
+def _page_changes_table() -> str:
+    """The changes table (route b) completed like test_route_b_... plus the RECENT events."""
+    rows = "".join(
+        f'<tr><td>{d.isoformat()}</td><td><a href="#">{sym}</a></td><td>x</td><td></td><td></td>'
+        "<td>fixture completion</td></tr>"
+        for sym, d in EXTRA_ADDITIONS
+    ) + "".join(
+        f"<tr><td>2025-10-01</td><td></td><td></td><td>{sym}</td><td>x</td><td>fixture</td></tr>"
+        for sym in EXTRA_REMOVALS
+    )
+    rows += (
+        f'<tr><td>{RECENT.isoformat()}</td><td><a href="#">{RECENT_ADD}</a></td><td>New Co</td>'
+        f"<td>{RECENT_DROP}</td><td>x</td><td>fixture</td></tr>"
+    )
+    return CHANGES_TABLE.replace("</table>", rows + "</table>")
+
+
 def _assert_recent_change_invariants(store: Store, today=date(2026, 10, 20)):
     syms = _current_symbols_of(store)
     assert RECENT_ADD in syms and RECENT_DROP not in syms
@@ -1071,11 +1111,13 @@ def _current_symbols_of(store: Store) -> set[str]:
 
 
 @respx.mock
-@pytest.mark.parametrize("route", ["derived", "fmp-changes"])
+@pytest.mark.parametrize("route", ["derived", "fmp-changes", "wikipedia-changes"])
 @pytest.mark.parametrize("arg", ["2026-10-19", "2026-10-17"])  # last trading day; 3 days back
 def test_back_dated_run_with_recent_add_and_removal_succeeds(cli_env, route, arg):
     fmp = route == "fmp-changes"
     html, history, current = _recent_change_sources(fmp=fmp)
+    if route == "wikipedia-changes":  # route (b): FMP 402, the page's own changes table
+        html = html.replace("</body>", _page_changes_table() + "</body>")
     _mock_sources(
         wiki_html=html, fmp_status=200 if fmp else 402, history=history, current=current
     )
@@ -1092,7 +1134,11 @@ def test_back_dated_run_with_recent_add_and_removal_succeeds(cli_env, route, arg
         r["symbol"]: (r["start_date"], r["end_date"], r["source"])
         for r in rows.iter_rows(named=True)
     }
-    if fmp:
+    if route == "wikipedia-changes":
+        assert by[RECENT_ADD] == (RECENT, None, "wikipedia-changes")
+        assert by[RECENT_DROP][1] == date(2026, 10, 19)
+        assert "membership gap route: wikipedia-changes" in result.output
+    elif fmp:
         assert by[RECENT_ADD] == (RECENT, None, "fmp")
         assert by[RECENT_DROP][1] == date(2026, 10, 19)  # the trading day before the removal
         assert "membership gap route: fmp" in result.output
@@ -1100,9 +1146,9 @@ def test_back_dated_run_with_recent_add_and_removal_succeeds(cli_env, route, arg
         assert by[RECENT_ADD] == (RECENT, None, "wikipedia-derived-exact")
         assert by[RECENT_DROP][1] == date(2025, 8, 23)  # bounded at H
     # the report's "members on <date>" line is the --date's own membership: ZBRA is still a
-    # member then on the FMP route (closes 10-19), already bounded out on the derived route;
+    # member then on routes (a)/(b) (closes 10-19), already bounded out on the derived route;
     # ZNEW is not a member yet
-    assert f"members on {arg}: {503 if fmp else 502}" in result.output
+    assert f"members on {arg}: {502 if route == 'derived' else 503}" in result.output
     # the Python API agrees
     respx.reset()
     _mock_sources(
