@@ -11,13 +11,17 @@ from argus.data.providers.bootstrap import YFinanceProvider
 from argus.data.store import Store
 from argus.settings import get_settings
 
-MIN_WRITTEN_PERCENT = 98  # AC1 / AMD-0012: exit 0 only when >= 98% of requested symbols written
+MIN_WRITTEN_PERCENT = 98  # AC1 / AMD-0012: exit 0 only when >= 98% of requested symbols succeed
 
 
-def meets_threshold(written: int, failed: int) -> bool:
-    """True when written / (written + failed) >= 98% (integer arithmetic, no float edge)."""
-    total = written + failed
-    return total == 0 or written * 100 >= MIN_WRITTEN_PERCENT * total
+def meets_threshold(succeeded: int, failed: int) -> bool:
+    """True when succeeded / (succeeded + failed) >= 98% (integer arithmetic, no float edge).
+
+    AMD-0014 section 2E: callers pass written + skipped as `succeeded`; a skipped symbol is
+    already complete, so only symbols in `failed` count against the threshold.
+    """
+    total = succeeded + failed
+    return total == 0 or succeeded * 100 >= MIN_WRITTEN_PERCENT * total
 
 
 def _parse_date(value: str, option: str) -> date:
@@ -49,5 +53,5 @@ def bootstrap(
     )
     if result.failed:
         typer.echo("failed: " + ",".join(result.failed))
-    if not meets_threshold(result.n_symbols, len(result.failed)):
+    if not meets_threshold(result.n_symbols + len(result.skipped), len(result.failed)):
         raise typer.Exit(1)

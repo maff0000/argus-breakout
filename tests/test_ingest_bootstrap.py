@@ -269,3 +269,38 @@ def test_cli_exit_code_at_threshold(clean_env, tmp_path, monkeypatch, written, f
     res = CliRunner().invoke(app, ["ingest", "bootstrap", "--start", "2024-01-02"])
     assert res.exit_code == code, res.output
     assert "failed: " + ",".join(names) in res.output  # failed list reported either way
+
+
+# ------------------------------------- AMD-0014 2E: skipped symbols count as successes
+def _run_cli(clean_env, tmp_path, monkeypatch, written, skipped, failed):
+    clean_env.setenv("ARGUS_STORE_DIR", str(tmp_path / "store"))
+    result = BootstrapResult(
+        n_symbols=written,
+        n_rows=1,
+        failed=[f"F{i}" for i in range(failed)],
+        skipped=[f"S{i}" for i in range(skipped)],
+    )
+    monkeypatch.setattr(
+        "argus.commands.ingest_bootstrap.bootstrap_history", lambda *a, **k: result
+    )
+    return CliRunner().invoke(app, ["ingest", "bootstrap", "--start", "2024-01-02"])
+
+
+@pytest.mark.parametrize(
+    ("written", "skipped", "failed", "code"),
+    [
+        (10, 600, 5, 0),  # skipped-heavy: 610/615 = 99.2%
+        (10, 0, 5, 1),  # same without skips: 10/15 fails
+        (0, 50, 0, 0),  # fully-skipped re-run
+        (0, 98, 2, 0),  # exact 98% boundary, all skipped successes
+        (50, 48, 2, 0),  # exact boundary, mixed written + skipped
+        (0, 97, 3, 1),  # one more failure: 97%
+        (49, 48, 3, 1),  # mixed, one more failure
+    ],
+)
+def test_cli_exit_code_counts_skips_as_successes(
+    clean_env, tmp_path, monkeypatch, written, skipped, failed, code
+):
+    """Fails if skipped symbols are left out of the threshold (pre-AMD-0014 2E behaviour)."""
+    res = _run_cli(clean_env, tmp_path, monkeypatch, written, skipped, failed)
+    assert res.exit_code == code, res.output
