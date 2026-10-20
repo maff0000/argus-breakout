@@ -453,3 +453,26 @@ def test_cli_end_to_end_current_failure_exits_1(clean_env, tmp_path, calls):
     assert "current: written=1 skipped=0 failed=1 (50.0%)" in res.output
     assert "historical: written=1 skipped=0 unavailable=0 (100.0%)" in res.output
     assert "current failed: ZZZ" in res.output
+
+
+def test_cli_rerun_classifies_skipped_symbols_by_cohort(clean_env, tmp_path, calls):
+    """A re-run that skips current AND inactive-historical symbols reports each in its cohort.
+
+    Fails if every skip is treated as current (the historical line would show skipped=0 and
+    the current line skipped=2).
+    """
+    st = _cli_env(clean_env, tmp_path)
+    st.upsert(
+        "symbols",
+        pl.DataFrame({"symbol": ["AAA", "BBB"], "active": [True, False]}),
+        ["symbol"],
+    )
+    args = ["ingest", "bootstrap", "--start", "2024-01-02", "--end", "2024-03-25",
+            "--symbols", "AAA,BBB,HIST1"]
+    first = CliRunner().invoke(app, args)
+    assert first.exit_code == 0, first.output
+    again = CliRunner().invoke(app, args)
+    assert again.exit_code == 0, again.output
+    assert "current: written=0 skipped=1 failed=0 (100.0%)" in again.output
+    assert "historical: written=0 skipped=1 unavailable=1 (50.0%)" in again.output
+    assert "historical unavailable: HIST1" in again.output
