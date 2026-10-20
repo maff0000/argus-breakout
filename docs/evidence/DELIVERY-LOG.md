@@ -37,3 +37,4 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-19T23:19Z  WO-0002  Accepted  AMD-0011 3 pre-committed acceptance; docs/evidence/WO-0002/acceptance.md at audited 19ad58f96e100f90f57ebfc3b2fdb87e46516c39
 2026-10-19T23:19Z  WO-0002  Merged  PR #3 merge commit (no squash); CI green
 2026-10-19T23:19Z  WO-0002  Closed  
+2026-10-20T07:39Z  WO-0011  In Progress  base 19d9ca0ee0a441a1f74cd9030e18f2f94fecf517 (AMD-0012/0013 schema vehicle); branch wo/0011-actions-schema-correction

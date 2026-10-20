@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Approved |
+| **Status** | In Progress |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` §8.5 ; `DESIGN.md` §3.2, §3.3 |
 | **Applicable Amendments** | AMD-0012, AMD-0013 |
 | **Base SHA** | main at approval of this Work Order (the commit introducing this file) |
