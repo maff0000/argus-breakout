@@ -5,7 +5,7 @@
 | **Status** | In Progress |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` §8.5 ; `DESIGN.md` §3.2, §3.3 |
 | **Applicable Amendments** | AMD-0012, AMD-0013 |
-| **Base SHA** | main at approval of this Work Order (the commit introducing this file) |
+| **Base SHA** | 19d9ca0ee0a441a1f74cd9030e18f2f94fecf517 |
 | **Branch** | `wo/0011-actions-schema-correction` |
 | **Depends on** | none (WO-0002 is merged at `bdce04d`) |
 | **Parallel group** | P0-B2 — **blocks the WO-0004 and WO-0005 deltas**, which need these tables on `main` |
