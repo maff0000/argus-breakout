@@ -14,6 +14,7 @@ app.add_typer(adjust.app, name="adjust")
 app.add_typer(ibkr.app, name="ibkr")
 
 # --- command module imports (append only; one line per Work Order) ---
+import argus.commands.ingest_bootstrap  # noqa: F401, E402
 import argus.commands.store_cmds  # noqa: F401, E402
 
 
