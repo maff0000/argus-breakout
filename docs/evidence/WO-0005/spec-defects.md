@@ -1,0 +1,6 @@
+# WO-0005 — Specification defects (standing ruling 7, AMD-0016 §2B)
+
+1. **AC1 as originally written** — *"loads bars for ≥ 98% of symbols in `symbols` ∪ historical `membership`"*.
+   - Cause (evidence): yfinance holds no data for 127 of the 237 historical-only requested symbols (delisted/acquired/renamed away). Achievable figure for the whole population: 628 / 755 = **83.2%**.
+   - Disposition: already replaced by the Architect in AMD-0015 §2B with AC1a (current cohort ≥ 99%) and AC1b (historical cohort reported, no threshold). The implementation reports exactly those figures; guards: no critical invariant touched (the survivorship consequence is carried by CI-8, which downstream work must honour), no behaviour change beyond the ruled cohort split, no non-vacuity weakened. Filed for ratification.
+2. **Resume floor relative to the whole range** (AMD-0012/WO-0005 §2 "skips symbols with ≥ 95% of expected rows for the range"): a symbol listed after the range start can never reach 95% and is re-downloaded each run (45 current + 29 historical symbols on the live resume re-run). Cost only (idempotent upserts); no wrong number or exit. Recorded, not changed (changing it is a behaviour change).

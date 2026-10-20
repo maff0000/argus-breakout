@@ -144,11 +144,34 @@ ranks          (date DATE, symbol TEXT, playbook TEXT, composite DOUBLE, verdict
 evidence_packs (date DATE PK, tokens INT, json TEXT)
 briefs         (date DATE, model TEXT, prompt_tokens INT, completion_tokens INT, text TEXT, grade JSON NULL)
 reconcile_log  (date DATE, symbol TEXT, field TEXT, ours DOUBLE, theirs DOUBLE, pct_diff DOUBLE, breach BOOLEAN)
+bar_flags      (symbol TEXT, date DATE, source TEXT, flag TEXT, detail TEXT)
+                -- PK (symbol, date, source, flag). Per-symbol-day data-quality findings (AMD-0018).
+                -- flag: 'jump_unexplained' | 'jump_split_reconciled'. The set is extensible
+                -- without an Amendment and is enumerated in argus/data/validate.py.
 ingest_log     (date DATE, source TEXT, rows INT, status TEXT, detail TEXT, finished_at TIMESTAMP)
+                -- status: 'ok' | 'quarantined' | 'holiday' | 'failed' (AMD-0018 §2A). 'rejected' is retired.
 schema_version (version INT, applied_at TIMESTAMP)
+store_meta     (key TEXT PRIMARY KEY, value TEXT)
+                -- key 'store_dir' records the absolute directory the parquet views were built
+                -- against, so a relocated store is detected rather than silently misread (AMD-0017)
 ```
 
 ### 3.3 Rules
+- The Parquet-backed views bake an absolute glob at `init_schema()` time.
+  `store_meta['store_dir']` records the directory they were built against
+  and `Store.connect()` verifies it (AMD-0017): read-write recreates the
+  views against the current directory and logs the change; read-only raises
+  `StoreRelocatedError` naming both paths. A missing record means first
+  use, not relocation. Reading a store whose views point elsewhere is
+  prohibited — the dangerous mode returns **wrong** rows, not no rows.
+- Every validation rule that depends on prior state must distinguish
+  **applied-and-passed** from **could-not-be-applied** (AMD-0017, CI-6).
+  For the 25%-jump rule: on a date with any earlier row in `bars_raw`,
+  `prior_close` missing for more than 5% of that day's members
+  **quarantines** the day (AMD-0018 §2A) with reason `jump rule inapplicable: prior_close missing for N of
+  M members`. `jump_rule_applied = False` is legitimate only on a genuine
+  first-ever ingest date, where it is recorded rather than counted as a
+  pass. Any later rule with a prior-state dependency inherits this.
 - Store bars as received (`bars_raw`, tagged with the source's adjustment
   `basis`) and corporate actions (`splits`, `dividends`) separately; `bars` is
   materialised from them by `argus/data/adjust.py`. Free sources deliver
@@ -165,15 +188,57 @@ schema_version (version INT, applied_at TIMESTAMP)
   lacks. A member without an industry group fails validation.
 - Canonical ticker form: `BRK.B`. Provider forms (`BRK-B`, `BRK B`,
   `BRK/B`) are mapped in `argus/data/tickers.py` at every boundary.
-- Nightly validation (`argus/data/validate.py`): a day is **rejected** (not
-  published to `bars`) if < 95% of active members have a bar; if any close
-  moves > 25% vs prior close with no split in `splits`; if volume is zero for > 2% of members. The classification check applies to
-  **current members only** (AMD-0016 §2C): a historical-only member without
-  an industry group never rejects a day — `validate_day` returns
-  `n_unclassified_members` and the day is stored. Rejecting on historical
-  classification was miscalibrated; it rejected every day before hanshof's
-  last snapshot.
-  Rejection is logged to `ingest_log` and surfaced in the report.
+- **`bars_raw` records what the provider returned, always** (AMD-0018 §2A,
+  CI-9). No validation verdict may prevent a fetched row from being stored.
+  Validation records a judgement *about* a day; it is not a gate on
+  persisting it. The quality seam is `bars_raw` → `bars`
+  (`argus/data/adjust.py`), which publishes only days whose
+  `ingest_log.status = 'ok'` and excludes flagged symbol-days per
+  `bar_flags`.
+- `ingest_log.status` ∈ `{'ok','quarantined','holiday','failed'}`
+  (AMD-0018 §2A). `'ok'` — stored, no day-level fault; any symbol flags
+  counted in `detail`. `'quarantined'` — **stored in `bars_raw`** but
+  carrying a day-level fault, so not published to `bars`. `'failed'` —
+  nothing was fetched. `'rejected'` is retired: it conflated "judged
+  faulty" with "not stored". `backfill_polygon` resumes past
+  `('ok','holiday','quarantined')`; re-judging is `ingest revalidate`'s
+  job, which reads `bars_raw` and calls no provider (AMD-0018 §2D, §2E).
+- Nightly validation (`argus/data/validate.py`). A day is **quarantined**
+  (stored in `bars_raw`, not published to `bars`) if < 95% of members on
+  that date have a bar; if volume is zero for > 2% of them; if the jump
+  rule is inapplicable per AMD-0017 §2B; or if **≥ 20% of members on that
+  date are flagged `jump_unexplained`**. A `|close/prior_close − 1| > 0.25`
+  move is otherwise **a flag on that symbol-day, not a verdict on the
+  day** (AMD-0018 §2C): `jump_split_reconciled` where `splits` holds a row
+  for that `(symbol, date)` consistent with the move, `jump_unexplained`
+  otherwise. Flags go to `bar_flags` and are counted in
+  `ingest_log.detail`. The rule is **recorded** for every symbol in the
+  fetched frame and **decided** over `members_on(d)` only: a symbol that
+  is not a member on `d` — a former member whose ticker has since been
+  reassigned, or a configured ETF — can never contribute to a day-level
+  verdict (AMD-0018 §2B). Record widely, decide narrowly. The
+  classification check applies to **current members only**
+  (AMD-0016 §2C): a historical-only member without an industry group never
+  quarantines a day — `validate_day` returns `n_unclassified_members` and
+  the day is stored. Rejecting on historical classification was
+  miscalibrated; it rejected every day before hanshof's last snapshot.
+  Every verdict is logged to `ingest_log` and surfaced in the report.
+  The 20% breadth figure separates a vendor-side failure, which is
+  near-total, from real market action, where individual members moving
+  more than 25% on the heaviest sessions number in the tens, not the
+  hundreds. It is a named constant beside `_COVERAGE_MIN_PCT`, changeable
+  only by Amendment, and a test must fail without it (CI-6).
+- A symbol's `bars` are bounded by that symbol's own listing life
+  (AMD-0018 §2F). Where a delisted member's ticker has been reassigned to
+  an unrelated company, WO-0007 must not join the two companies' rows into
+  one series: bars after the member's final `membership.end_date` are
+  excluded unless `config/ticker_renames.yaml` maps the symbol forward as
+  continuity (AMD-0014, AMD-0016). `MaterialiseReport.warnings` records
+  every symbol with bars outside its membership intervals by more than 10
+  trading days. Untreated, a reverse split at the new company appears as a
+  discontinuity in the old member's history and corrupts every 252-day
+  momentum and relative-strength feature crossing it — the damage CI-2
+  guards against for renames.
 - Reconciliation: 20 rotating members per night vs IBKR `ADJUSTED_LAST`
   daily bars; tolerance 0.1% on close, 10% on volume; breaches written to
   `reconcile_log` and surfaced.
@@ -408,7 +473,10 @@ stop 1.5·ATR14 (long) / 2·ATR14 (short); position cap 10% of equity; max
   parameterised.
 - Logging: structured JSON, secrets redacted, request ids; MCP access log
   retained 90 days. No PII stored.
-- Backups: nightly `store/` snapshot to a second disk.
+- Backups: nightly `store/` snapshot to a second disk. A restored or
+  relocated snapshot must be opened read-write once (`argus init-store`,
+  idempotent) so the Parquet views are rebuilt against their new path —
+  `Store.connect()` enforces this (AMD-0017).
 
 **Portability (ADR-0008, AMD-0004).** The application is built
 container-ready and packaged in PID-ARGUS-0006: no absolute paths in

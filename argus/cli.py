@@ -15,7 +15,10 @@ app.add_typer(ibkr.app, name="ibkr")
 
 # --- command module imports (append only; one line per Work Order) ---
 import argus.commands.ingest_polygon  # noqa: F401, E402
+import argus.commands.events_cmds  # noqa: F401, E402
+import argus.commands.ingest_bootstrap  # noqa: F401, E402
 import argus.commands.store_cmds  # noqa: F401, E402
+import argus.commands.universe_cmds  # noqa: F401, E402
 
 
 def _version_callback(value: bool) -> None:

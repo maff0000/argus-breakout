@@ -38,6 +38,8 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-19T23:19Z  WO-0002  Merged  PR #3 merge commit (no squash); CI green
 2026-10-19T23:19Z  WO-0002  Closed  
 2026-10-19T23:20Z  WO-0004  In Progress  base bdce04d5b20fa6c31880ed0b13655972a3540b38 (main at Closure of WO-0002; P0-C concurrent group); branch wo/0004-polygon-provider
+2026-10-19T23:20Z  WO-0003  In Progress  base bdce04d5b20fa6c31880ed0b13655972a3540b38 (main at Closure of WO-0002; P0-C concurrent group); branch wo/0003-universe-and-membership
+2026-10-19T23:20Z  WO-0005  In Progress  base bdce04d5b20fa6c31880ed0b13655972a3540b38 (main at Closure of WO-0002; P0-C concurrent group); branch wo/0005-bootstrap-history
 2026-10-20T07:39Z  WO-0011  In Progress  base 19d9ca0ee0a441a1f74cd9030e18f2f94fecf517 (AMD-0012/0013 schema vehicle); branch wo/0011-actions-schema-correction
 2026-10-20T07:45Z  WO-0011  Implemented  head 647e1aa930c385f754593ef38b03668514eca53c (Implementer diff reviewed and committed by DC; mechanicals green on host)
 2026-10-20T07:45Z  WO-0011  Audited GREEN  audited sha 647e1aa930c385f754593ef38b03668514eca53c; evidence docs/evidence/WO-0011/
@@ -47,3 +49,20 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-20T07:46Z  WO-0011  Closed  evidence docs/evidence/WO-0011/
 2026-10-20T11:36Z  WO-0004  Audited GREEN  audited sha db714d9 (AMD-0012 delta); evidence docs/evidence/WO-0004/
 2026-10-20T11:36Z  WO-0004  PR Open  branch wo/0004-polygon-provider; AC2 backfill rejected 210 historical weekdays (historical members lack symbols rows); awaiting ARCHITECT RULING
+2026-10-20T08:03Z  WO-0003  Implemented  head 465b8f3559ef47ae82dd659d998470183c1edda1 (Implementer diff reviewed and committed by DC; mechanicals green on host)
+2026-10-20T08:03Z  WO-0003  Audited GREEN  audited sha 22a3ad1 (PR head 465b8f3559ef47ae82dd659d998470183c1edda1 = audited tree + clerical main merge); evidence docs/evidence/WO-0003/
+2026-10-20T08:03Z  WO-0003  PR Open  branch wo/0003-universe-and-membership; awaiting ARCHITECT DECISION (audit finding 1, rename gap)
+2026-10-20T11:13Z  WO-0003  Delta  AMD-0014 rename delta + invariant fix; audited GREEN no findings at 4c10c60 (pass 3); evidence docs/evidence/WO-0003/
+2026-10-20T11:13Z  WO-0003  Clerical  scrubbed the execution-host address from docs/evidence/WO-0011/auditor-prompt.md (PID 9 hygiene; DC slip)
+2026-10-20T11:13Z  WO-0003  PR Open  PR #5 head updated; awaiting ARCHITECT ruling on AMD-0014 3 diff-scope condition (universe_cmds.py)
+2026-10-20T17:28Z  WO-0003  Audited GREEN  whole-branch pass 6 at 6896fe7 (passes 4,5 RED, fixed); evidence docs/evidence/WO-0003/
+2026-10-20T17:28Z  WO-0003  Accepted  delegated acceptance (AMD-0015 3, AMD-0016 2E); ruling 7 on AC6 live count at final head, docs/evidence/WO-0003/spec-defects.md
+2026-10-20T17:28Z  WO-0003  Closed  merged via PR #5
+2026-10-20T11:16Z  WO-0005  Audited GREEN  audited sha 2c5a8a2 (AMD-0014 2E delta); evidence docs/evidence/WO-0005/
+2026-10-20T11:16Z  WO-0005  PR Open  branch wo/0005-bootstrap-history; AC1 NOT MET (83.2% vs 98%, all failures delisted/renamed historical members); awaiting ARCHITECT RULING
+2026-10-20T12:24Z  WO-0005  Delta  AMD-0015 cohort split + skipped-cohort test; audited GREEN no findings at 70ce2d7; evidence docs/evidence/WO-0005/
+2026-10-20T12:24Z  WO-0005  Accepted  delegated acceptance (AMD-0010 2B, AMD-0015 3, AMD-0016); AC1a 100%, AC1b recorded; docs/evidence/WO-0005/acceptance.md
+2026-10-20T17:35Z  WO-0006  In Progress  Implementer dispatched; base 46086e6
+2026-10-20T19:27Z  WO-0006  Audited GREEN  pass 1 at 9d6e192, whole-branch pass 2 at 9a841b0; evidence docs/evidence/WO-0006/
+2026-10-20T19:27Z  WO-0006  Accepted  delegated acceptance; ruling 7 on AC1 coverage (39 of 518 = 7.5%), docs/evidence/WO-0006/spec-defects.md
+2026-10-20T19:27Z  WO-0006  Closed  merged via PR
