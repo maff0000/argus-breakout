@@ -8,7 +8,7 @@ DDL contains the placeholder `__GLOB__`, which `Store.init_schema` replaces
 with the quoted parquet glob under the configured store directory.
 """
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _BAR_VIEW = (
     "CREATE OR REPLACE VIEW {name} AS SELECT {cols} "
@@ -56,9 +56,12 @@ DDL: dict[str, str] = {
             "CAST(basis AS TEXT) AS basis, CAST(ingested_at AS TIMESTAMP) AS ingested_at"
         ),
     ),
-    "adjustments": """CREATE TABLE IF NOT EXISTS adjustments (
-        symbol TEXT, date DATE, split_ratio DOUBLE, cash_dividend DOUBLE, source TEXT,
-        PRIMARY KEY (symbol, date))""",
+    "splits": """CREATE TABLE IF NOT EXISTS splits (
+        symbol TEXT, date DATE, ratio DOUBLE NOT NULL, source TEXT,
+        PRIMARY KEY (symbol, date, source))""",
+    "dividends": """CREATE TABLE IF NOT EXISTS dividends (
+        symbol TEXT, date DATE, cash_amount DOUBLE NOT NULL, source TEXT,
+        PRIMARY KEY (symbol, date, source))""",
     "bars": _BAR_VIEW.format(name="bars", cols=_BARS_CAST),
     "etf_bars": _BAR_VIEW.format(name="etf_bars", cols=_BARS_CAST),
     "iv_daily": """CREATE TABLE IF NOT EXISTS iv_daily (

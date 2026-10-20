@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.6, §8.7 (`ibkr reconcile`, `ibkr iv`) ; `DESIGN.md` §3.1, §3.3 (reconciliation), §3.2 (`iv_daily`, `reconcile_log`) ; ADR-0006 |
-| **Applicable Amendments** | AMD-0002 |
+| **Applicable Amendments** | AMD-0002, AMD-0012 |
 | **Base SHA** | main at Closure of WO-0007 |
 | **Branch** | `wo/0008-ibkr-reconcile-and-iv` |
 | **Depends on** | WO-0007 |
@@ -59,8 +59,8 @@ port and client id come only from settings; there is no default port. The
 client must disconnect in a `finally`. IBKR returns symbols in its own
 form; convert with `tickers`. `reconcile_day` compares on the intersection
 of dates; a symbol with no IBKR data is recorded as `field='missing'`,
-`breach=True`. Nothing in this Work Order mutates `bars`, `bars_raw` or
-`adjustments`.
+`breach=True`. Nothing in this Work Order mutates `bars`, `bars_raw`, `splits` or
+`dividends` (AMD-0012).
 
 ## 5. Required tests
 | Test | Proves | Capable of failing because… |

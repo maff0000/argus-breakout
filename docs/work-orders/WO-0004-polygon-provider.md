@@ -4,8 +4,8 @@
 |---|---|
 | **Status** | In Progress |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.6, §8.7 (`ingest polygon`, `ingest polygon-actions`) ; `DESIGN.md` §3.1, §3.3 ; ADR-0003 |
-| **Applicable Amendments** | AMD-0002 |
-| **Base SHA** | bdce04d5b20fa6c31880ed0b13655972a3540b38 |
+| **Applicable Amendments** | AMD-0002, AMD-0012 |
+| **Base SHA** | 02e4a2e3065570a46f55349b524e60131d7de8a3 |
 | **Branch** | `wo/0004-polygon-provider` |
 | **Depends on** | WO-0002 |
 | **Parallel group** | P0-C (with WO-0003, WO-0005) |
@@ -16,7 +16,7 @@
 ## 1. Objective
 Nightly and backfill ingestion of whole-market daily bars from Polygon's
 grouped-daily endpoint into `bars_raw` (restricted to symbols present in
-`symbols`), plus splits and dividends into `adjustments`, with the DESIGN
+`symbols`), plus splits into `splits` and dividends into `dividends` (AMD-0012), with the DESIGN
 §3.3 validation gate and `ingest_log` records.
 
 ## 2. Scope (exhaustive)
@@ -36,7 +36,9 @@ argus/data/ingest_polygon.py         create  ingest_polygon_day(store, client, d
                                                (filters grouped_daily to symbols ∪ ETFs in `symbols`; runs validate_day; writes bars_raw only when ok;
                                                always writes ingest_log)
                                              backfill_polygon(store, client, start, end) -> list[IngestResult]  (trading days only; skips days already present; honours rate limit)
-                                             ingest_polygon_actions(store, client, since) -> int  (upsert adjustments)
+                                             ingest_polygon_actions(store, client, since) -> int
+                                               (writes splits() -> `splits` and dividends() -> `dividends`, each upsert keyed
+                                                ["symbol","date","source"]; a same-date split AND dividend must both persist — AMD-0012)
 argus/commands/ingest_polygon.py     create  `ingest polygon --date D | --backfill START END`, `ingest polygon-actions --since D` (registers onto argus.commands.ingest.app)
 argus/cli.py                         modify  add exactly one import line for argus.commands.ingest_polygon in the append-only block (AMD-0002)
 tests/fixtures/polygon/grouped_daily_2026-10-16.json   create  scrubbed sample: ≥ 600 tickers incl. members, ETFs, junk tickers (warrants, units)
@@ -79,7 +81,7 @@ out of `bars_raw` entirely.
 ## 6. Acceptance criteria
 - **AC1** — `argus ingest polygon --date <last trading day>` on the host writes ≥ 95% of members to `bars_raw` with `source='polygon'`, `basis='split'` (operator check with counts).
 - **AC2** — `argus ingest polygon --backfill <2 years ago> <today>` completes within rate limits and is resumable; `ingest_log` shows one row per weekday with status ok/holiday/rejected (operator check: summary counts; wall time).
-- **AC3** — `argus ingest polygon-actions --since 2024-01-01` populates `adjustments` with splits and dividends for members (operator check: counts; at least one known 2026 split present).
+- **AC3** — `argus ingest polygon-actions --since 2024-01-01` populates `splits` and `dividends` for members (operator check: counts per table; at least one known 2026 split present; and a symbol with a same-date split and dividend retains both rows) (AMD-0012).
 - **AC4** — All validation rules enforced (tests in §5).
 - **AC5** — API key appears nowhere in logs or errors (test_key_not_leaked; Auditor grep of host logs sample).
 

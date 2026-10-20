@@ -23,11 +23,16 @@ mirror; the Work Order file is authoritative.
 
 | WO | Title | Depends on | Group | Status |
 |---|---|---|---|---|
-| [WO-0010](WO-0010-secret-drop-hardening.md) | Secret-drop hardening: ignore credential-shaped files, document the drop procedure | — | P0-A (independent of WO-0001) | Approved |
+| [WO-0010](WO-0010-secret-drop-hardening.md) | Secret-drop hardening: ignore credential-shaped files, document the drop procedure | — | P0-A (independent of WO-0001) | Merged |
+| [WO-0011](WO-0011-actions-schema-correction.md) | Corporate-actions schema correction: `splits` and `dividends` (AMD-0012 defect fix; WO-0002 is closed, so a new Work Order per DELIVERY-CHAIN §9) | — | P0-B2 — **blocks the WO-0004/WO-0005 deltas** | Approved |
 
 Execution order for the Delivery Controller: **WO-0001 + WO-0010
-concurrently** (group P0-A, independent — WO-0010 touches no path in
-WO-0001's scope) → B → C (three concurrent) → D (two concurrent) → E → F.
+concurrently** (P0-A) → **WO-0002** (P0-B, merged `bdce04d`) →
+**WO-0003 + WO-0004 + WO-0005** concurrently (P0-C, all audited GREEN,
+deltas pending) → **WO-0011** (P0-B2, must merge before the WO-0004/0005
+deltas) → D (two concurrent) → E → F. Current order of work is set by
+AMD-0013 §3: WO-0011, then the WO-0003 delta, then the WO-0004/0005
+deltas, then P0-D.
 Base SHAs for dependent Work Orders are by-reference (`main at Closure of
 …`) and are resolved by the Delivery Controller when their dependencies
 close (DELIVERY-CHAIN §6.3). WO-0001's Base SHA was rebased by Architect
@@ -35,6 +40,7 @@ determination — see its §11.
 
 ## Approval record
 WO-0001 … WO-0009 were approved by the Architect in the commit that
-introduced this index; WO-0010 in the commit that added it (AMD-0005). Each
+introduced this index; WO-0010 in the commit that added it (AMD-0005);
+WO-0011 in the commit that added it (AMD-0013). Each
 Work Order's §9 `Commit:` line refers to its approving commit — see
 `git log -- docs/work-orders/`.

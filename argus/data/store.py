@@ -121,8 +121,8 @@ class Store:
                 con.execute(ddl)
             con.execute(
                 "INSERT INTO schema_version SELECT ?, ? "
-                "WHERE NOT EXISTS (SELECT 1 FROM schema_version)",
-                [schema.SCHEMA_VERSION, _utcnow()],
+                "WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = ?)",
+                [schema.SCHEMA_VERSION, _utcnow(), schema.SCHEMA_VERSION],
             )
             con.execute("COMMIT")
         except BaseException:
@@ -258,6 +258,25 @@ class Store:
             sql += " AND symbol IN (SELECT unnest(?))"
             params.append(symbols)
         return self.read(sql + " ORDER BY symbol, date", params)
+
+    # ------------------------------------------------------------------ corporate actions
+    def _read_actions(
+        self, table: str, symbols: list[str] | None, start: date, end: date
+    ) -> pl.DataFrame:
+        # `table` is one of two constant names chosen by the callers below.
+        sql = "SELECT * FROM " + table + " WHERE date >= ? AND date <= ?"  # noqa: S608
+        params: list = [start, end]
+        if symbols is not None:
+            _check_symbols(symbols)
+            sql += " AND symbol IN (SELECT unnest(?))"
+            params.append(symbols)
+        return self.read(sql + " ORDER BY symbol, date, source", params)
+
+    def read_splits(self, symbols: list[str] | None, start: date, end: date) -> pl.DataFrame:
+        return self._read_actions("splits", symbols, start, end)
+
+    def read_dividends(self, symbols: list[str] | None, start: date, end: date) -> pl.DataFrame:
+        return self._read_actions("dividends", symbols, start, end)
 
     # ------------------------------------------------------------------ catalog helpers
     def members_on(self, d: date) -> list[str]:
