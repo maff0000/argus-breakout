@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Approved |
+| **Status** | In Progress |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.7 (`events refresh`) ; `DESIGN.md` §3.1, §3.2 (`events`) ; ADR-0003 |
 | **Applicable Amendments** | AMD-0002 |
-| **Base SHA** | main at Closure of WO-0003 |
+| **Base SHA** | 46086e6 |
 | **Branch** | `wo/0006-fmp-calendars-events` |
 | **Depends on** | WO-0003 |
 | **Parallel group** | P0-D (with WO-0007) |

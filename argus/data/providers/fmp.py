@@ -204,12 +204,89 @@ class FMPClient:
             },
         )
 
+    def earnings_calendar(self, start: date, end: date) -> pl.DataFrame:
+        """Earnings dates in [start, end]: [symbol, date, time_of_day, eps_estimate, confirmed].
+
+        `time_of_day` is 'bmo', 'amc' or None. `confirmed` is True when FMP already
+        carries an actual EPS for the row (the report has happened).
+        """
+        body = self.get("earnings-calendar", {"from": start.isoformat(), "to": end.isoformat()})
+        if not isinstance(body, list):
+            raise ProviderError("fmp earnings-calendar: unexpected payload")
+        rows: list[dict] = []
+        skipped = 0
+        for rec in body:
+            sym = _calendar_symbol(rec)
+            when = _calendar_date(rec)
+            if sym is None or when is None:
+                skipped += 1
+                continue
+            tod = str(rec.get("time") or "").strip().lower()
+            eps = rec.get("epsEstimated")
+            rows.append(
+                {
+                    "symbol": sym,
+                    "date": when,
+                    "time_of_day": tod if tod in ("bmo", "amc") else None,
+                    "eps_estimate": float(eps) if isinstance(eps, int | float) else None,
+                    "confirmed": rec.get("epsActual") is not None,
+                }
+            )
+        if skipped:
+            log.warning("fmp_earnings_skipped", count=skipped)
+        return pl.DataFrame(
+            rows,
+            schema={
+                "symbol": pl.String,
+                "date": pl.Date,
+                "time_of_day": pl.String,
+                "eps_estimate": pl.Float64,
+                "confirmed": pl.Boolean,
+            },
+        )
+
+    def dividends_calendar(self, start: date, end: date) -> pl.DataFrame:
+        """Ex-dividend dates in [start, end]: [symbol, date (ex-date), cash_dividend]."""
+        body = self.get("dividends-calendar", {"from": start.isoformat(), "to": end.isoformat()})
+        if not isinstance(body, list):
+            raise ProviderError("fmp dividends-calendar: unexpected payload")
+        rows: list[dict] = []
+        skipped = 0
+        for rec in body:
+            sym = _calendar_symbol(rec)
+            when = _calendar_date(rec)
+            amount = rec.get("dividend")
+            if sym is None or when is None or not isinstance(amount, int | float):
+                skipped += 1
+                continue
+            rows.append({"symbol": sym, "date": when, "cash_dividend": float(amount)})
+        if skipped:
+            log.warning("fmp_dividends_skipped", count=skipped)
+        return pl.DataFrame(
+            rows,
+            schema={"symbol": pl.String, "date": pl.Date, "cash_dividend": pl.Float64},
+        )
+
     def profile(self, symbol: str) -> dict:
         """Company profile for one canonical symbol (fallback only); {} if none."""
         body = self.get("profile", {"symbol": to_provider(symbol, "fmp")})
         if isinstance(body, list):
             return dict(body[0]) if body and isinstance(body[0], dict) else {}
         return dict(body)
+
+
+def _calendar_symbol(rec: dict) -> str | None:
+    try:
+        return normalize((rec.get("symbol") or "").strip(), "fmp")
+    except ValueError:
+        return None
+
+
+def _calendar_date(rec: dict) -> date | None:
+    try:
+        return date.fromisoformat(str(rec.get("date"))[:10])
+    except ValueError:
+        return None
 
 
 def _record_date(rec: dict) -> date | None:

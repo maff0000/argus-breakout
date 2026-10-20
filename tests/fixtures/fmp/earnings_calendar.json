@@ -1,0 +1,7 @@
+[
+ {"symbol": "JPM", "date": "2026-10-14", "time": "bmo", "epsActual": 5.07, "epsEstimated": 4.84, "revenueActual": 46000000000, "revenueEstimated": 45000000000, "lastUpdated": "2026-10-14"},
+ {"symbol": "AAPL", "date": "2026-10-29", "time": "amc", "epsActual": null, "epsEstimated": 1.78, "revenueActual": null, "revenueEstimated": 102000000000, "lastUpdated": "2026-10-01"},
+ {"symbol": "XOM", "date": "2026-10-30", "time": "", "epsActual": null, "epsEstimated": 1.9, "revenueActual": null, "revenueEstimated": null, "lastUpdated": "2026-10-01"},
+ {"symbol": "ZZZZ", "date": "2026-10-27", "time": "bmo", "epsActual": null, "epsEstimated": 0.12, "revenueActual": null, "revenueEstimated": null, "lastUpdated": "2026-10-01"},
+ {"symbol": "QQQQ", "date": "2026-11-03", "time": null, "epsActual": null, "epsEstimated": null, "revenueActual": null, "revenueEstimated": null, "lastUpdated": "2026-10-01"}
+]

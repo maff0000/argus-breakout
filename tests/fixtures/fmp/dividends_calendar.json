@@ -1,0 +1,5 @@
+[
+ {"symbol": "AAPL", "date": "2026-11-07", "recordDate": "2026-11-10", "paymentDate": "2026-11-13", "declarationDate": "2026-10-29", "adjDividend": 0.27, "dividend": 0.27, "yield": 0.4, "frequency": "Quarterly"},
+ {"symbol": "JPM", "date": "2026-10-06", "recordDate": "2026-10-06", "paymentDate": "2026-10-31", "declarationDate": "2026-09-16", "adjDividend": 1.5, "dividend": 1.5, "yield": 2.0, "frequency": "Quarterly"},
+ {"symbol": "ZZZZ", "date": "2026-11-12", "recordDate": "2026-11-13", "paymentDate": "2026-11-20", "declarationDate": "2026-10-20", "adjDividend": 0.1, "dividend": 0.1, "yield": 1.0, "frequency": "Quarterly"}
+]
