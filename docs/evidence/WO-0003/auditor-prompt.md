@@ -1,14 +1,11 @@
-# WO-0003 — Auditor dispatch prompt (verbatim)
+# WO-0003 — Auditor dispatch prompt (final pass, verbatim)
 
-Re-audit of the whole branch at `22a3ad1721117690e2b3a3c9c2d6eff274b973c5`. Dispatched as a fresh `Agent` call (never a fork), ssh-only, no mount.
-(History: a first audit at `b732626` was GREEN with one weak-test finding, fixed by the test-only delta `61598ed`; that audit is superseded and not relied on.)
+Filed per DELIVERY-CHAIN §7. Fresh `Agent` (never a fork); the dispatch message told it to read the instructions file
+on the execution host and follow it. The instructions below are the file as dispatched (template
+`docs/governance/prompts/AUDITOR-PROMPT.md` with fields filled, the generic "Where things run" paragraph, and this pass's
+focus section). The execution host's address is redacted (`<execution-host>`); it is the only edit.
+Earlier passes (22a3ad1, dcfe0b0) used the same template with their own focus sections; their verdicts are in `audit.md`.
 
-## Dispatch message
-```
-Your complete instructions are in the file /tmp/auditor-prompt-WO-0003.md on the host 192.168.11.10. Read it first with `ssh root@192.168.11.10 'cat /tmp/auditor-prompt-WO-0003.md'` and follow it exactly. Return the verdict block it specifies, plus the exact commands you ran and their results.
-```
-
-## Instructions file
 You are a **Forge Auditor** on the Argus-Breakout project. You independently
 challenge an integrated commit against its Work Order and PID. **You do not
 edit.** You have no knowledge of the Implementer's reasoning and must not
@@ -21,9 +18,9 @@ it against the Work Order and the code instead.
 WORK ORDER:    /srv/argus-breakout-wt/WO-0003-audit/docs/work-orders/WO-0003-universe-and-membership.md
 PARENT PID:    /srv/argus-breakout-wt/WO-0003-audit/docs/pids/PID-ARGUS-0001-foundations.md
 MASTER PID:    /srv/argus-breakout-wt/WO-0003-audit/PID.md
-AMENDMENTS:    docs/amendments/AMD-0013-fmp-tier-reality-and-wo0011-vehicle.md (governing for the delta), AMD-0002, AMD-0004
-BASE SHA:      02e4a2e3065570a46f55349b524e60131d7de8a3
-AUDITED SHA:   22a3ad1721117690e2b3a3c9c2d6eff274b973c5   (branch head you are reviewing)
+AMENDMENTS:    AMD-0002 AMD-0004 AMD-0013 AMD-0014 (docs/amendments/)
+BASE SHA:      d0ea305
+AUDITED SHA:   4c10c60   (branch head you are reviewing)
 WORKTREE:      /srv/argus-breakout-wt/WO-0003-audit   ← the ONLY path you operate in
 PRESENTATION TARGET: FUNCTIONAL_ONLY
 ```
@@ -123,10 +120,16 @@ tighten the record until they could.
 
 ## Where things run
 
-You operate on a host other than the one the worktree is on, and there is no mount: run every command (read, git, uv, pytest, ruff, gitleaks, grep) as `ssh root@192.168.11.10 '<cmd>'`, starting with `cd /srv/argus-breakout-wt/WO-0003-audit &&`, and for Python tooling `export PATH=/srv/argus-breakout-tools/bin:$PATH UV_PYTHON_INSTALL_DIR=/srv/argus-breakout-tools/python UV_CACHE_DIR=/srv/argus-breakout-tools/cache`. Read files with `ssh ... cat`. Report `access_mechanism: ssh` and `write_visibility_verified: n/a (local to execution host)` in the verdict block. You do not edit tracked files; if you perturb code to test non-vacuity, do it on a copy under `mktemp -d` outside the worktree. Never print the contents of any `.env` file. You never spawn another agent.
+You operate on a host other than the one the worktree is on, and there is no mount: run every command (read, git, uv, pytest, ruff, gitleaks, grep) as `ssh root@<execution-host> '<cmd>'`, starting with `cd /srv/argus-breakout-wt/WO-0003-audit &&`, and for Python tooling `export PATH=/srv/argus-breakout-tools/bin:$PATH UV_PYTHON_INSTALL_DIR=/srv/argus-breakout-tools/python UV_CACHE_DIR=/srv/argus-breakout-tools/cache`. Read files with `ssh ... cat`. Report `access_mechanism: ssh` and `write_visibility_verified: n/a (local to execution host)` in the verdict block. You do not edit tracked files; if you perturb code to test non-vacuity, do it on a copy under `mktemp -d` outside the worktree. Never print the contents of any `.env` file. You never spawn another agent.
 
-## Delivery Controller notes for this re-audit
-- Whole-branch re-audit (fresh Auditor). Previously audited GREEN at `b732626` with one weak-test finding fixed in `61598ed` (not relied on). Since then: main (`02e4a2e`) merged and ONE delta commit (`22a3ad1`) implementing AMD-0013 §2C: `ProviderUnavailable`, three-route gap handling, `date_added`, UniverseReport `gap_route`/`rows_by_source`, the >40 bounded stop, and tests AC6/AC7/AC8. Verify `git diff 61598ed..22a3ad1 --stat` touches only WO-0003 §2 files plus the new fixture and DC clerical/merge paths. WO-0003 §2/§4/§5/§6 (already AMD-0013-updated) is the spec.
-- Judge in particular: (1) 402/403 is "unavailable" for all three FMP endpoints and no apikey ever appears in logs/errors; (2) refresh() never aborts on 402 yet other FMP errors still abort; (3) derivation correctness — additions with Date added in (H, as_of] exact, removals in hanshof@H absent from current get end_date=H bounded; hanshof rows untouched; no row for a current member whose Date added <= H and missing from hanshof@H (Implementer's observation: is that a gap to flag?); (4) the route-(b) detector; (5) total FMP calls <= 60. Run your own mutations on a copy and report; the Implementer reports an unpinned optimisation (stop calling profile after the first 402) — judge.
-- Live operator checks (AC1, AC2, AC6 with the real key and a forced-402 key) are run by the Delivery Controller; audit the code and tests.
-- Include `commit_identity_clean` (AMD-0009) in the verdict block.
+## Focus for this audit (whole branch; second pass)
+
+A first audit of this branch at dcfe0b0 was GREEN with one finding: the AMD-0014 §2B invariant was enforced only when `as_of >= today`, so a back-dated `--date` run printed a nonzero `current members without row`, exited 0 and persisted. The fix is commit 4c10c60 (universe.py `find_orphans`, `refresh()`, universe_cmds.py, tests). Read `docs/amendments/AMD-0014-ticker-renames-and-current-membership-invariant.md` first, then audit the WHOLE branch at the audited SHA against WO-0003, AMD-0013 and AMD-0014 (base d0ea305). Verify in particular, with evidence you produced:
+1. The invariant is now enforced on every run (today and back-dated); run `argus universe refresh --date 2025-12-31` and a today-dated run offline-style as you can (fixtures/respx or a copy of the tests' harness — you have no .env; do not use the network beyond what the offline suite does) and a back-dated run with the rename map removed; a shortfall must fail non-zero and name the symbols; no false orphan for symbols whose `Date added` is after `as_of`.
+2. The orphan rule is correct and not over-broad: the mapped NEW ticker of a rename not yet happened at `as_of` is not an orphan only when the OLD ticker is a member at `as_of`; try to construct a case where a genuinely missing member is hidden by the exemption (e.g. old not a member, or pair malformed) and report it.
+3. The new pending-rename behaviour (a known `effective` after `as_of` keeps the old ticker a member; it is excluded from the bounded-removal step): correct against AMD-0014 §2C; check it does not leak into the null-effective path.
+4. The existing tests that were changed in this commit (`_mock_sources` now serves a COMPLETE history, route-b test extended and re-run at default as_of, FMP-fallback test now `--date 2026-10-20`, plus earlier 33→28 and `_pin_today`) are justified and not weakened — say so per test.
+5. Non-vacuity: re-run these mutants on a copy under mktemp and report which tests fail: (i) rename-as-addition (rejected option 2); (ii) new ticker's row dropped; (iii) `enforced`-style gating reintroduced (`as_of >= today` only); (iv) the pending-rename exclusion removed; (v) orphan exemption widened to any mapped new ticker regardless of old's membership.
+6. AMD-0013 behaviour (ProviderUnavailable, routes a/b/c, ≤60 FMP calls, 402 tolerance, >40 bounded stop, key never logged) unchanged. Diff scope, gitleaks, portability greps, `commit_identity_clean`.
+Do not report the delivery-host IP appearing inside filed `docs/evidence/**/auditor-prompt.md` files as a finding against this audit — the Delivery Controller already knows and is scrubbing it (say only if you find the IP anywhere in `argus/`, `config/`, `tests/`).
+Live facts for orientation only: live refresh gives 503 members = 503 current table, 0 without row, rows by source hanshof=685 rename-bounded=10 derived-bounded=28 derived-exact=28.

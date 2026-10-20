@@ -48,3 +48,6 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-20T08:03Z  WO-0003  Implemented  head 465b8f3559ef47ae82dd659d998470183c1edda1 (Implementer diff reviewed and committed by DC; mechanicals green on host)
 2026-10-20T08:03Z  WO-0003  Audited GREEN  audited sha 22a3ad1 (PR head 465b8f3559ef47ae82dd659d998470183c1edda1 = audited tree + clerical main merge); evidence docs/evidence/WO-0003/
 2026-10-20T08:03Z  WO-0003  PR Open  branch wo/0003-universe-and-membership; awaiting ARCHITECT DECISION (audit finding 1, rename gap)
+2026-10-20T11:13Z  WO-0003  Delta  AMD-0014 rename delta + invariant fix; audited GREEN no findings at 4c10c60 (pass 3); evidence docs/evidence/WO-0003/
+2026-10-20T11:13Z  WO-0003  Clerical  scrubbed the execution-host address from docs/evidence/WO-0011/auditor-prompt.md (PID 9 hygiene; DC slip)
+2026-10-20T11:13Z  WO-0003  PR Open  PR #5 head updated; awaiting ARCHITECT ruling on AMD-0014 3 diff-scope condition (universe_cmds.py)

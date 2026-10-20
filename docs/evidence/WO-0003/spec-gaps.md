@@ -1,8 +1,11 @@
-# WO-0003 — Specification gaps and rulings
+# WO-0003 — Spec gaps and residuals (for the Architect)
 
-1. **Renamed tickers fall through AMD-0013 §2C route (c).** Additions are derived only for `Date added > H`; a current member added before H but listed under a different ticker in hanshof@H gets no row (5 live: BNY, FISV, MRSH, SKYD, VMRK), and the predecessor ticker is recorded as a bounded removal. `members_on(today)` is 498 vs 503. Auditor finding 1; the code follows the spec literally. **Needs an Architect decision** (accept as residual; or a rename-aware rule, e.g. give such members a bounded start at H+1 — which would raise the bounded count to ~38, still under the ceiling of 40 — or report a "current members without a membership row" count).
-2. `tickers.normalize(..., "hanshof")` uses "." but the real hanshof file uses "-" (worked around by normalising as "yfinance"); carried from the first audit.
-3. Implementer-noted: `RateLimiter` burst behaviour; `cli.py` never calls `configure_logging`; `test_budget_enforced` takes ~15 s.
-4. Unpinned optimisation: stop calling `profile` after the first 402 (Auditor M5) — harmless.
-5. `MAX_BOUNDED_ROWS` stop is applied after membership is written (Auditor O2).
-6. AMD-0013 §2C(b) detector is fixture-only; the live page currently has no changes table.
+Resolved: the rename gap (audit pass-1 finding) → AMD-0014; the back-dated invariant (pass-2 finding) → fixed in `4c10c60`.
+
+Open / for the retrospective:
+1. **Whole-interval relabelling.** `_apply_renames` re-sources the mapped old ticker's *entire* open-at-H interval (back to its hanshof start) as `rename-*`, per AMD-0014 §2C "both rows". Dates are exact; the precision label of the early start is lost. A `hanshof+rename-*` form (cf. `hanshof+fmp`) would preserve it. Ask: keep or change.
+2. **PARA→PSKY inside hanshof.** PSKY appears in hanshof only at the 2025-08-23 snapshot (PARA ends 2025-08-22), so the same continuity defect exists *inside* hanshof, for any `as_of` before 2025-08-23 (SKYD is then named as an orphan on a back-dated run). Not in the five-pair seed; adding a PARA→SKYD/PSKY pair would fix it. The same may hold for other renames inside the 2015–2025 history (hanshof series are ticker-keyed); price series across such renames are a WO-0004/0005/0006 concern.
+3. **Effective dates** for the five pairs are null (no free source). Operator-maintained; fill when known.
+4. **Price series across renames.** `bars` for an old ticker come from yfinance/Polygon under that ticker; yfinance serves old-ticker history only under the new ticker (WO-0005 live bootstrap: BK, FI, MMC, EQR(?), PSKY, … fail as "possibly delisted"). The membership model is now continuous, but the *price* continuity across a rename needs a rule (alias table in the bars layer). Not WO-0003's scope; flag for WO-0006/0007 design.
+5. **Observed (audit):** orphan exemption trusts the map (obs 1); back-dated runs on an FMP-only current table fail closed (obs 2); route-(b) detector is fixture-only (no live changes table exists); the `httpx` logger could log `apikey` URLs if a handler is attached (note for WO-0009).
+6. **AMD-0014 §3 diff condition.** The delta also touches `argus/commands/universe_cmds.py` (two report lines + exit path), which is in WO-0003 §2 but not in AMD-0014 §3's three-file list. The condition is therefore not literally satisfied; reported rather than self-waived.

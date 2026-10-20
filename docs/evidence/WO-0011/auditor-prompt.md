@@ -5,7 +5,7 @@ instructions: `/tmp/auditor-prompt-WO-0011.md` on dell-debian (the audit worktre
 
 ## Dispatch message
 ```
-Your complete instructions are in the file /tmp/auditor-prompt-WO-0011.md on the host 192.168.11.10. Read it first with `ssh root@192.168.11.10 'cat /tmp/auditor-prompt-WO-0011.md'` and follow it exactly. Return the verdict block it specifies, plus the exact commands you ran and their results.
+Your complete instructions are in the file /tmp/auditor-prompt-WO-0011.md on the host <execution-host>. Read it first with `ssh root@<execution-host> 'cat /tmp/auditor-prompt-WO-0011.md'` and follow it exactly. Return the verdict block it specifies, plus the exact commands you ran and their results.
 ```
 
 ## Instructions file
@@ -123,7 +123,7 @@ tighten the record until they could.
 
 ## Where things run
 
-You operate on a host other than the one the worktree is on, and there is no mount: run every command (read, git, uv, pytest, ruff, gitleaks, grep) as `ssh root@192.168.11.10 '<cmd>'`, starting with `cd /srv/argus-breakout-wt/WO-0011-audit &&`, and for Python tooling `export PATH=/srv/argus-breakout-tools/bin:$PATH UV_PYTHON_INSTALL_DIR=/srv/argus-breakout-tools/python UV_CACHE_DIR=/srv/argus-breakout-tools/cache`. Read files with `ssh ... cat`. Report `access_mechanism: ssh` and `write_visibility_verified: n/a (local to execution host)` in the verdict block. You do not edit tracked files; if you perturb code to test non-vacuity, do it on a copy under `mktemp -d` outside the worktree. Never print the contents of any `.env` file. You never spawn another agent.
+You operate on a host other than the one the worktree is on, and there is no mount: run every command (read, git, uv, pytest, ruff, gitleaks, grep) as `ssh root@<execution-host> '<cmd>'`, starting with `cd /srv/argus-breakout-wt/WO-0011-audit &&`, and for Python tooling `export PATH=/srv/argus-breakout-tools/bin:$PATH UV_PYTHON_INSTALL_DIR=/srv/argus-breakout-tools/python UV_CACHE_DIR=/srv/argus-breakout-tools/cache`. Read files with `ssh ... cat`. Report `access_mechanism: ssh` and `write_visibility_verified: n/a (local to execution host)` in the verdict block. You do not edit tracked files; if you perturb code to test non-vacuity, do it on a copy under `mktemp -d` outside the worktree. Never print the contents of any `.env` file. You never spawn another agent.
 
 ## Delivery Controller notes for this audit
 - The Implementer reported one out-of-scope test failure, `tests/test_cli.py::test_init_store_creates_store` (asserted "18 tables"). The Delivery Controller changed that one assertion to 19 under DELIVERY-CHAIN §9 standing ruling 6; judge whether ruling 6's three conditions hold and report `scope_fidelity` accordingly (name the file).
