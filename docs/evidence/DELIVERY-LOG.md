@@ -51,3 +51,6 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-20T11:13Z  WO-0003  Delta  AMD-0014 rename delta + invariant fix; audited GREEN no findings at 4c10c60 (pass 3); evidence docs/evidence/WO-0003/
 2026-10-20T11:13Z  WO-0003  Clerical  scrubbed the execution-host address from docs/evidence/WO-0011/auditor-prompt.md (PID 9 hygiene; DC slip)
 2026-10-20T11:13Z  WO-0003  PR Open  PR #5 head updated; awaiting ARCHITECT ruling on AMD-0014 3 diff-scope condition (universe_cmds.py)
+2026-10-20T17:28Z  WO-0003  Audited GREEN  whole-branch pass 6 at 6896fe7 (passes 4,5 RED, fixed); evidence docs/evidence/WO-0003/
+2026-10-20T17:28Z  WO-0003  Accepted  delegated acceptance (AMD-0015 3, AMD-0016 2E); ruling 7 on AC6 live count at final head, docs/evidence/WO-0003/spec-defects.md
+2026-10-20T17:28Z  WO-0003  Closed  merged via PR #5
