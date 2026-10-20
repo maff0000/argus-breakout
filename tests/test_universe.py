@@ -25,10 +25,12 @@ from argus.data.universe import (
     Rename,
     build_membership,
     fetch_wikipedia_constituents,
+    find_orphans,
     is_trading_day,
     load_hanshof_csv,
     load_renames,
     map_industry_group,
+    members_on_date,
     next_trading_day,
     parse_wikipedia_changes,
     previous_trading_day,
@@ -68,6 +70,34 @@ def _wiki_client(html: str = WIKI_HTML) -> httpx.Client:
         return httpx.Response(200, text=html)
 
     return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def _complete_history() -> tuple[list[dict], list[tuple[str, date]], list[str]]:
+    """HISTORICAL completed for a today-dated run: an 'added' record for every current-table
+    symbol whose Date added is after the last hanshof snapshot, and a 'removed' record for every
+    hanshof@H member absent from the current table (other than the mapped renames, which the
+    rename map handles). AMD-0014 makes a partial route (a)/(b) history a failure."""
+    h = date(2025, 8, 23)
+    wiki = fetch_wikipedia_constituents(_wiki_client()).sort(["date_added", "symbol"])
+    known_added = {r["symbol"] for r in HISTORICAL}
+    known_removed = {r["removedTicker"] for r in HISTORICAL if r.get("removedTicker")}
+    added = [
+        (r["symbol"], r["date_added"])
+        for r in wiki.iter_rows(named=True)
+        if r["date_added"] is not None and r["date_added"] > h and r["symbol"] not in known_added
+    ]
+    last = set(load_hanshof_csv(HANSHOF_SAMPLE)["symbols"][-1].to_list())
+    mapped_old = {r.old for r in load_renames(CONFIG)}
+    removed = sorted(last - set(wiki["symbol"].to_list()) - mapped_old - known_removed)
+    body = (
+        HISTORICAL
+        + [{"date": d.isoformat(), "symbol": sym, "reason": "fixture"} for sym, d in added]
+        + [{"date": "2025-10-01", "removedTicker": sym, "reason": "fixture"} for sym in removed]
+    )
+    return body, added, removed
+
+
+COMPLETE_HISTORY, EXTRA_ADDITIONS, EXTRA_REMOVALS = _complete_history()
 
 
 def _intervals(df: pl.DataFrame, symbol: str) -> list[tuple]:
@@ -262,7 +292,7 @@ def _mock_sources(
         )
     )
     for endpoint, body in (
-        ("historical-sp500-constituent", HISTORICAL),
+        ("historical-sp500-constituent", COMPLETE_HISTORY),
         ("sp500-constituent", CURRENT),
     ):
         respx.get(BASE_URL + endpoint).mock(
@@ -337,7 +367,8 @@ def test_refresh_is_idempotent_and_honours_date(cli_env):
 def test_refresh_falls_back_to_fmp_when_wikipedia_fails(cli_env):
     _mock_sources()
     respx.get(WIKIPEDIA_URL).mock(return_value=httpx.Response(503))
-    result = runner.invoke(app, ["universe", "refresh", "--date", "2025-12-31"])
+    # FMP-only current table carries no Date added, so only a today-dated run can be judged
+    result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
     assert result.exit_code == 0, result.output
     assert "wikipedia" not in result.output.split("sources:")[1]
     assert "fmp:sp500-constituent" in result.output
@@ -436,12 +467,20 @@ def test_changes_table_detected_when_present_and_skipped_when_absent():
 
 @respx.mock
 def test_route_b_used_when_changes_table_present_and_fmp_402(cli_env):
-    _mock_sources(
-        wiki_html=WIKI_HTML.replace("</body>", CHANGES_TABLE + "</body>"), fmp_status=402
+    # the fixture changes table is partial; complete it (AMD-0014 fails a run whose members
+    # differ from the current table) with the missing later additions and removals
+    extra_rows = "".join(
+        f'<tr><td>{d.isoformat()}</td><td><a href="#">{sym}</a></td><td>x</td><td></td><td></td>'
+        "<td>fixture completion</td></tr>"
+        for sym, d in EXTRA_ADDITIONS
+    ) + "".join(
+        f"<tr><td>2025-10-01</td><td></td><td></td><td>{sym}</td><td>x</td><td>fixture</td></tr>"
+        for sym in EXTRA_REMOVALS
     )
-    # the fixture changes table is partial, so a today-dated run would (correctly) fail the
-    # AMD-0014 invariant; back-date it: this test is about route (b) rows, not completeness
-    store, report = _run_refresh(cli_env, as_of=date(2025, 12, 31))
+    table = CHANGES_TABLE.replace("</table>", extra_rows + "</table>")
+    assert table != CHANGES_TABLE
+    _mock_sources(wiki_html=WIKI_HTML.replace("</body>", table + "</body>"), fmp_status=402)
+    store, report = _run_refresh(cli_env)
     assert report.gap_route == "wikipedia-changes"
     assert report.rows_by_source.get("wikipedia-derived-bounded", 0) == 0
     iv = store.read("SELECT * FROM membership WHERE symbol IN ('IBKR','WBA') ORDER BY symbol")
@@ -762,17 +801,96 @@ def test_missing_rename_map_fails_loudly(cli_env, tmp_path, monkeypatch):
     result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
     assert result.exit_code == 1
     assert "BNY" in result.output and "FISV" in result.output
-    assert "no open membership row" in result.output
+    assert "no membership row on 2026-10-20" in result.output
     store = Store(cli_env)
     assert store.read("SELECT count(*) AS n FROM membership")["n"][0] == 0  # nothing persisted
     logged = store.read("SELECT status FROM ingest_log WHERE source = ?", ["universe"])
     assert logged["status"].to_list() == ["failed"]
-    # a back-dated run cannot be validated against today's table: reported, not a failure
+    # a back-dated run is judged against its own as_of and fails too, naming the symbols
     respx.reset()
     _mock_sources(fmp_status=402)
     back = runner.invoke(app, ["universe", "refresh", "--date", "2025-12-31"])
-    assert back.exit_code == 0, back.output
-    assert "current members without row: " in back.output
+    assert back.exit_code == 1
+    for sym in ("BNY", "FISV", "MRSH", "SKYD", "VMRK"):
+        assert sym in back.output
+    assert "no membership row on 2025-12-31" in back.output
+
+
+@respx.mock
+def test_back_dated_run_with_map_passes_and_ignores_later_additions(cli_env):
+    _mock_sources(fmp_status=402)
+    store, report = _run_refresh(cli_env, as_of=date(2025, 12, 31))
+    assert report.current_members_without_row == 0
+    assert report.n_current_table == 503 and report.n_members_today != report.n_current_table
+    wiki = fetch_wikipedia_constituents(_wiki_client())
+    later = wiki.filter(pl.col("date_added") > date(2025, 12, 31))["symbol"].to_list()
+    assert len(later) >= 10  # additions after as_of are not orphans ...
+    members = set(store.members_on(date(2025, 12, 31)))
+    assert not members & set(later)  # ... and are not members either
+    assert {"BNY", "FISV", "MRSH", "SKYD", "VMRK"} <= members
+    assert not {"BK", "FI", "MMC", "PSKY", "EQR"} & members
+    result = runner.invoke(app, ["universe", "refresh", "--date", "2025-12-31"])
+    assert result.exit_code == 0, result.output
+    assert "current members without row: 0" in result.output
+
+
+def _current_rows(*pairs):
+    return [{"symbol": s_, "date_added": d} for s_, d in pairs]
+
+
+def test_orphans_before_h_unrenamed_tickers_are_continuity_not_orphans():
+    # as_of before H: nothing has been renamed yet, the OLD ticker is the member
+    as_of = date(2025, 6, 30)
+    hanshof = _mini_hanshof().filter(pl.col("date") <= as_of)
+    hanshof = pl.concat([hanshof, pl.DataFrame({"date": [as_of], "symbols": [["AAA", "OLDX"]]})])
+    current = _current_rows(("AAA", date(2010, 1, 4)), ("NEWX", date(2010, 1, 4)),
+                            ("LATE", date(2025, 7, 1)))  # LATE joined after as_of
+    renames = [Rename("OLDX", "NEWX", None)]
+    m = build_membership(hanshof, None, _no_changes(), as_of=as_of, renames=renames,
+                         current_symbols={"AAA", "NEWX", "LATE"})
+    assert members_on_date(m, as_of) == {"AAA", "OLDX"}
+    assert find_orphans(m, current, renames, as_of) == []
+    # without the map NEWX is a current symbol that was not a member under that name: orphan
+    assert find_orphans(m, current, [], as_of) == ["NEWX"]
+    # a symbol added on/before as_of with no row is an orphan; after as_of it is not
+    early = _current_rows(("AAA", date(2010, 1, 4)), ("LATE", date(2025, 6, 30)))
+    assert find_orphans(m, early, renames, as_of) == ["LATE"]
+
+
+def test_orphans_unmapped_hanshof_internal_rename_is_named():
+    # PARA->PSKY-style step inside hanshof, not in the map: the later ticker has no row at an
+    # earlier as_of and nothing explains it, so it is named
+    as_of = date(2024, 6, 30)
+    hanshof = pl.DataFrame({"date": [date(2024, 1, 2)], "symbols": [["AAA", "PARA"]]})
+    m = build_membership(hanshof, None, _no_changes(), as_of=as_of)
+    cur = _current_rows(("AAA", date(2010, 1, 4)), ("SKYD", date(1994, 9, 30)))
+    assert find_orphans(m, cur, [Rename("PSKY", "SKYD", None)], as_of) == ["SKYD"]
+
+
+@respx.mock
+def test_known_effective_after_as_of_keeps_old_ticker_a_member(cli_env, tmp_path, monkeypatch):
+    # a mapped rename that has not happened yet at as_of: old stays a member (not a bounded
+    # removal), the new ticker is not yet a member and not an orphan
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    for name in ("gics.yaml", "universe.yaml"):
+        shutil.copy(CONFIG / name, cfg / name)
+    text = (CONFIG / "ticker_renames.yaml").read_text().replace(
+        "{old: BK, new: BNY, effective: null}", "{old: BK, new: BNY, effective: 2026-03-02}"
+    )
+    (cfg / "ticker_renames.yaml").write_text(text)
+    monkeypatch.setenv("ARGUS_CONFIG_DIR", str(cfg))
+    _mock_sources(fmp_status=402)
+    store, report = _run_refresh(cli_env, as_of=date(2025, 12, 31))
+    members = set(store.members_on(date(2025, 12, 31)))
+    assert "BK" in members and "BNY" not in members
+    assert report.current_members_without_row == 0
+    store2, _ = _run_refresh(cli_env, as_of=date(2026, 10, 20))
+    after = set(store2.members_on(date(2026, 10, 20)))
+    assert "BNY" in after and "BK" not in after
+    assert store2.members_on(date(2026, 3, 2)).count("BNY") == 1
+    assert "BK" not in store2.members_on(date(2026, 3, 2))
+    assert "BK" in store2.members_on(date(2026, 2, 27))
 
 
 @respx.mock

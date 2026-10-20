@@ -464,12 +464,15 @@ def _apply_renames(
     current: set[str],
     last_hanshof: date,
     as_of: date | None,
-) -> None:
+) -> set[str]:
     """Turn each applicable mapped pair into one continuous membership (AMD-0014 2C).
 
     Applies only when the NEW ticker is a current member with no open interval and the OLD
     ticker is open at the gap; a pair already covered by explicit change rows is untouched.
+    Returns the OLD tickers of pairs whose rename has not yet happened at `as_of`: they stay
+    open (a back-dated run), they are not bounded removals.
     """
+    pending: set[str] = set()
     for r in renames:
         if r.new not in current or r.new in open_ or r.old not in open_:
             continue
@@ -483,6 +486,7 @@ def _apply_renames(
             log.warning("rename_not_after_hanshof_ignored", old=r.old, new=r.new)
             continue
         if as_of is not None and new_start > as_of:
+            pending.add(r.old)
             continue
         began, _ = open_.pop(r.old)
         closed.append((r.old, began, old_end, src))
@@ -495,6 +499,7 @@ def _apply_renames(
             old_closes=old_end.isoformat(),
             new_opens=new_start.isoformat(),
         )
+    return pending
 
 
 # ---------------------------------------------------------------------- membership
@@ -568,8 +573,8 @@ def build_membership(
         _apply_renames(open_, closed, renames, current_set, last_hanshof, as_of)
     elif current_table is not None and (as_of is None or as_of > last_hanshof):
         current = set(current_table["symbol"].to_list())
-        _apply_renames(open_, closed, renames, current, last_hanshof, as_of)
-        for sym in sorted(set(open_) - current):  # left the index somewhere in (H, today]
+        pending = _apply_renames(open_, closed, renames, current, last_hanshof, as_of)
+        for sym in sorted(set(open_) - current - pending):  # left the index somewhere in (H, today]
             began, _ = open_.pop(sym)
             closed.append((sym, began, last_hanshof, SRC_DERIVED_BOUNDED))
         added = current_table.filter(pl.col("date_added") > last_hanshof)
@@ -653,7 +658,35 @@ class UniverseReport:
     # AMD-0014 2B: current-table symbols with no open (end_date IS NULL) membership interval
     current_members_without_row: int = 0
     current_members_without_row_symbols: list[str] = field(default_factory=list)
-    invariant_enforced: bool = True  # False only for a back-dated --date (see refresh())
+
+
+def members_on_date(membership: pl.DataFrame, d: date) -> set[str]:
+    """Symbols whose closed interval contains `d`."""
+    return set(
+        membership.filter(
+            (pl.col("start_date") <= d) & (pl.col("end_date").is_null() | (pl.col("end_date") >= d))
+        )["symbol"].to_list()
+    )
+
+
+def find_orphans(
+    membership: pl.DataFrame, current: list[dict], renames: list[Rename], as_of: date
+) -> list[str]:
+    """Current-table symbols that break the membership invariant at `as_of` (AMD-0014 2B).
+
+    Orphan: `Date added` <= as_of (or unknown) and no membership interval contains `as_of`.
+    Not an orphan: a symbol added after `as_of`, or the NEW ticker of a mapped rename whose
+    OLD ticker is a member at `as_of` (the rename has not happened yet: continuity).
+    """
+    on_as_of = members_on_date(membership, as_of)
+    old_of = {r.new: r.old for r in renames}
+    return [
+        r["symbol"]
+        for r in current
+        if (r["date_added"] is None or r["date_added"] <= as_of)
+        and r["symbol"] not in on_as_of
+        and old_of.get(r["symbol"]) not in on_as_of
+    ]
 
 
 def _today_utc() -> date:
@@ -767,30 +800,23 @@ def refresh(
     if bad:
         raise ValueError(f"non-canonical membership symbols: {bad[:5]}")
 
-    # --- AMD-0014 2B: every current-table symbol has exactly one open interval. Checked before
-    # anything is written. The current table describes TODAY, so it is enforced when as_of is
-    # today or later; a back-dated --date cannot be validated against it (reported only).
-    current_syms = [r["symbol"] for r in current]
-    with_open = set(membership.filter(pl.col("end_date").is_null())["symbol"].to_list())
-    without_row = [s for s in current_syms if s not in with_open]
-    n_current_table = len(current_syms)
-    enforced = as_of >= _today_utc()
-    if enforced:
-        if without_row:
-            raise MembershipInvariantError(
-                f"{len(without_row)} current index members have no open membership row: "
-                f"{', '.join(without_row)} (a ticker rename missing from "
-                "ticker_renames.yaml? AMD-0014)"
-            )
-        n_open_on = membership.filter(
-            (pl.col("start_date") <= as_of)
-            & (pl.col("end_date").is_null() | (pl.col("end_date") >= as_of))
-        )["symbol"].n_unique()
-        if n_open_on != n_current_table:
-            raise MembershipInvariantError(
-                f"membership on {as_of.isoformat()} has {n_open_on} members but the current "
-                f"table has {n_current_table} symbols"
-            )
+    # --- AMD-0014 2B: ALWAYS enforced, before anything is written (see find_orphans)
+    on_as_of = members_on_date(membership, as_of)
+    without_row = find_orphans(membership, current, renames, as_of)
+    n_current_table = len(current)
+    if without_row:
+        raise MembershipInvariantError(
+            f"{len(without_row)} current index members have no membership row on "
+            f"{as_of.isoformat()}: {', '.join(without_row)} "
+            "(a ticker rename missing from ticker_renames.yaml? AMD-0014)"
+        )
+    # Equal counts hold only for today or later; a back-dated run reports both, no comparison.
+    check_count = as_of >= _today_utc()
+    if check_count and len(on_as_of) != n_current_table:
+        raise MembershipInvariantError(
+            f"membership on {as_of.isoformat()} has {len(on_as_of)} members but the current "
+            f"table has {n_current_table} symbols"
+        )
 
     # --- industry group for every current member (no silent defaults)
     valid_sectors = set(gics["sectors"])
@@ -865,7 +891,7 @@ def refresh(
         for k, v in membership.group_by("source").len().sort("source").iter_rows()
     }
     n_members_today = len(store.members_on(as_of))
-    if enforced and n_members_today != n_current_table:
+    if check_count and n_members_today != n_current_table:
         raise MembershipInvariantError(
             f"members_on({as_of.isoformat()}) returned {n_members_today} but the current table "
             f"has {n_current_table} symbols (AMD-0014)"
@@ -882,7 +908,6 @@ def refresh(
         n_current_table=n_current_table,
         current_members_without_row=len(without_row),
         current_members_without_row_symbols=without_row,
-        invariant_enforced=enforced,
     )
 
 

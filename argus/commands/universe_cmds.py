@@ -38,8 +38,7 @@ def refresh_cmd(
         raise typer.Exit(1) from None
     n_bounded = report.rows_by_source.get(SRC_DERIVED_BOUNDED, 0)
     too_many_bounded = n_bounded > MAX_BOUNDED_ROWS
-    orphans = report.current_members_without_row if report.invariant_enforced else 0
-    healthy = report.n_missing_group == 0 and not too_many_bounded and not orphans
+    healthy = report.n_missing_group == 0 and not too_many_bounded
     status = "ok" if healthy else "failed"
     detail = f"gap route {report.gap_route}; " + ",".join(report.sources_used)
     if report.n_missing_group:
@@ -64,11 +63,5 @@ def refresh_cmd(
             f"STOP: {n_bounded} {SRC_DERIVED_BOUNDED} rows exceeds {MAX_BOUNDED_ROWS} (AC7)",
             err=True,
         )
-    if orphans:  # refresh() already raises when enforced; this covers a back-dated --date
-        typer.echo(
-            "STOP: current members without a membership row: "
-            + ", ".join(report.current_members_without_row_symbols),
-            err=True,
-        )
-    if report.n_missing_group or too_many_bounded or orphans:
+    if report.n_missing_group or too_many_bounded:
         raise typer.Exit(1)
