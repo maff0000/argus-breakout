@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | In Progress |
+| **Status** | PR Open |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.6, §8.7 (`ingest bootstrap`) ; `DESIGN.md` §3.1, §3.3 ; ADR-0003 |
 | **Applicable Amendments** | AMD-0002, AMD-0012, AMD-0014 |
 | **Base SHA** | d0ea305 (main with AMD-0014; prior base 02e4a2e) |

@@ -45,3 +45,5 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-20T07:46Z  WO-0011  Accepted  delegated under AMD-0013 s3; audit GREEN, ACs filed
 2026-10-20T07:46Z  WO-0011  Merged  PR #4
 2026-10-20T07:46Z  WO-0011  Closed  evidence docs/evidence/WO-0011/
+2026-10-20T11:16Z  WO-0005  Audited GREEN  audited sha 2c5a8a2 (AMD-0014 2E delta); evidence docs/evidence/WO-0005/
+2026-10-20T11:16Z  WO-0005  PR Open  branch wo/0005-bootstrap-history; AC1 NOT MET (83.2% vs 98%, all failures delisted/renamed historical members); awaiting ARCHITECT RULING
