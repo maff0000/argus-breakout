@@ -21,11 +21,13 @@ from argus.data.universe import (
     HANSHOF_URL,
     MAX_BOUNDED_ROWS,
     WIKIPEDIA_URL,
+    BackDatedRefreshError,
     MembershipInvariantError,
     Rename,
     build_membership,
+    check_refresh_date,
+    current_members_without_open_row,
     fetch_wikipedia_constituents,
-    find_orphans,
     is_trading_day,
     load_hanshof_csv,
     load_renames,
@@ -59,8 +61,8 @@ def _reset_structlog():
 
 @pytest.fixture(autouse=True)
 def _pin_today(monkeypatch):
-    # The AMD-0014 invariant is enforced for as_of >= today; pin "today" so the suite does not
-    # depend on the wall clock (the fixtures are a 2026-10-20 snapshot of the live page).
+    # The refresh date window (AMD-0015 2A) is relative to today; pin "today" so the suite does
+    # not depend on the wall clock (the fixtures are a 2026-10-20 snapshot of the live page).
     monkeypatch.setattr("argus.data.universe._today_utc", lambda: date(2026, 10, 20))
 
 
@@ -312,15 +314,37 @@ def _fmp_calls() -> int:
     return sum(c.request.url.host == "financialmodelingprep.com" for c in respx.calls)
 
 
+def _current_symbols() -> list[str]:
+    return fetch_wikipedia_constituents(_wiki_client())["symbol"].to_list()
+
+
+def _historical_only(store: Store) -> list[str]:
+    """Symbols in membership that are not in the current table (nor ETFs)."""
+    in_membership = store.read("SELECT DISTINCT symbol FROM membership")["symbol"].to_list()
+    return sorted(set(in_membership) - set(_current_symbols()))
+
+
+def _counts(store: Store) -> dict[str, int]:
+    return {
+        t: int(store.read(q)["n"][0])
+        for t, q in (
+            ("symbols", "SELECT count(*) AS n FROM symbols"),
+            ("membership", "SELECT count(*) AS n FROM membership"),
+            ("ingest_log", "SELECT count(*) AS n FROM ingest_log"),
+        )
+    }
+
+
 @respx.mock
 def test_refresh_populates_symbols_and_membership(cli_env):
     _mock_sources()
-    result = runner.invoke(app, ["universe", "refresh", "--date", "2025-12-31"])
+    result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
     assert result.exit_code == 0, result.output
     store = Store(cli_env)
+    # AC1 applies to current members and ETFs (active rows); historical-only rows may be NULL
     nulls = store.read(
-        "SELECT count(*) AS n FROM symbols "
-        "WHERE gics_industry_group IS NULL OR gics_industry_group = ''"
+        "SELECT count(*) AS n FROM symbols WHERE active AND "
+        "(gics_industry_group IS NULL OR gics_industry_group = '')"
     )["n"][0]
     assert nulls == 0
     etf = store.read("SELECT symbol FROM symbols WHERE gics_sector = ? ORDER BY symbol", ["ETF"])
@@ -330,10 +354,12 @@ def test_refresh_populates_symbols_and_membership(cli_env):
         ["ETF", "ETF"],
     )["n"][0]
     assert groups == 0
-    n_current = store.read("SELECT count(*) AS n FROM symbols WHERE gics_sector <> ?", ["ETF"])
+    n_current = store.read(
+        "SELECT count(*) AS n FROM symbols WHERE active AND gics_sector <> ?", ["ETF"]
+    )
     assert n_current["n"][0] == 503
     assert all(is_valid(s) for s in store.read("SELECT symbol FROM symbols")["symbol"].to_list())
-    members = store.members_on(date(2025, 12, 31))
+    members = store.members_on(date(2026, 10, 20))
     assert "IBKR" in members and "WBA" not in members
     assert store.members_on(date(2025, 8, 27)).count("WBA") == 1
     assert "missing industry group: 0" in result.output
@@ -348,8 +374,8 @@ def test_refresh_populates_symbols_and_membership(cli_env):
 @respx.mock
 def test_refresh_is_idempotent_and_honours_date(cli_env):
     _mock_sources()
-    first = runner.invoke(app, ["universe", "refresh", "--date", "2025-09-01"])
-    second = runner.invoke(app, ["universe", "refresh", "--date", "2025-09-01"])
+    first = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-14"])
+    second = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-14"])
     assert first.exit_code == 0 and second.exit_code == 0
     def report_lines(out: str) -> list[str]:  # drop timestamped structlog lines (stdout)
         return [ln for ln in out.splitlines() if not re.match(r"\d{4}-\d\d-\d\d \d\d:", ln)]
@@ -359,8 +385,8 @@ def test_refresh_is_idempotent_and_honours_date(cli_env):
     assert store.read("SELECT count(*) AS n FROM membership")["n"][0] == int(
         first.output.split("membership rows: ")[1].split()[0]
     )
-    members = store.members_on(date(2025, 9, 1))
-    assert "IBKR" in members and "APP" not in members  # 2025-09-22 change is after --date
+    assert "members on 2026-10-14: 503" in first.output  # the report is dated by --date
+    assert "IBKR" in store.members_on(date(2026, 10, 14))
 
 
 @respx.mock
@@ -380,16 +406,17 @@ def test_missing_group_exits_nonzero(cli_env):
     broken = WIKI_HTML.replace("<td>Semiconductors</td>", "<td>Quantum Widgets</td>", 1)
     assert broken != WIKI_HTML
     profile = _mock_sources(wiki_html=broken, profile=[])
-    result = runner.invoke(app, ["universe", "refresh", "--date", "2025-12-31"])
+    result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
     assert result.exit_code == 1
     assert "missing industry group: 1" in result.output
-    assert profile.call_count == 1  # the fallback was tried
+    # the fallback was tried for the current member FIRST; historical-only symbols share the cap
+    assert 1 <= profile.call_count <= 50
     store = Store(cli_env)
     nulls = store.read(
-        "SELECT count(*) AS n FROM symbols WHERE gics_industry_group IS NULL "
-        "OR gics_industry_group = ''"
+        "SELECT count(*) AS n FROM symbols WHERE active AND (gics_industry_group IS NULL "
+        "OR gics_industry_group = '')"
     )["n"][0]
-    assert nulls == 1  # never a silent default
+    assert nulls == 1  # never a silent default (current members and ETFs)
     logged = store.read("SELECT status FROM ingest_log WHERE source = ?", ["universe"])
     assert logged["status"].to_list() == ["failed"]
 
@@ -398,7 +425,7 @@ def test_missing_group_exits_nonzero(cli_env):
 def test_profile_fallback_can_rescue_a_symbol(cli_env):
     broken = WIKI_HTML.replace("<td>Semiconductors</td>", "<td>Quantum Widgets</td>", 1)
     _mock_sources(wiki_html=broken, profile=[{"symbol": "X", "industry": "Semiconductors"}])
-    result = runner.invoke(app, ["universe", "refresh", "--date", "2025-12-31"])
+    result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
     assert result.exit_code == 0, result.output
     assert "fmp:profile" in result.output
 
@@ -526,14 +553,18 @@ def test_gap_derivation_when_fmp_402(cli_env):
     assert "APP" in store.members_on(date(2025, 9, 22))
 
 
-@respx.mock
-def test_derivation_respects_as_of(cli_env):
-    _mock_sources(fmp_status=402)
-    store, report = _run_refresh(cli_env, as_of=date(2025, 9, 1))
-    assert "IBKR" in store.members_on(date(2025, 9, 1)) and "APP" not in store.members_on(
-        date(2025, 9, 1)
+def test_derivation_respects_as_of():
+    # build_membership's own as_of semantics (a refresh itself is limited to 7 days back,
+    # AMD-0015 2A, so this is exercised on the builder directly)
+    wiki = fetch_wikipedia_constituents(_wiki_client())
+    table = wiki.select(["symbol", "date_added"])
+    m = build_membership(
+        load_hanshof_csv(HANSHOF_SAMPLE), table, None, as_of=date(2025, 9, 1)
     )
-    assert report.rows_by_source.get("wikipedia-derived-exact", 0) == 1  # only IBKR <= as_of
+    on = members_on_date(m, date(2025, 9, 1))
+    assert "IBKR" in on and "APP" not in on
+    exact = m.filter(pl.col("source") == "wikipedia-derived-exact")
+    assert exact.height == 1  # only IBKR <= as_of
 
 
 @respx.mock
@@ -545,7 +576,8 @@ def test_402_does_not_abort_refresh(cli_env):
     assert report.n_symbols > 500 and report.n_members_today > 0
     assert report.n_missing_group == 1  # unmapped, counted, not an abort
     assert report.gap_route == "wikipedia-derived"
-    assert profile.call_count == 1
+    assert profile.call_count == 1  # one 402 ends the profile calls for BOTH cohorts
+    assert report.n_unclassified == len(_historical_only(store)) - 5  # 5 mapped renames inherit
     assert "fmp:sp500-constituent" not in report.sources_used
     assert "fmp:historical-sp500-constituent" not in report.sources_used
     result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
@@ -571,10 +603,14 @@ def test_fmp_call_count_bounded_when_many_profile_fallbacks(cli_env):
                 "Regional Banks", "Systems Software"):
         broken = broken.replace(f"<td>{sub}</td>", "<td>Quantum Widgets</td>")
     profile = _mock_sources(wiki_html=broken, profile=[])
-    _, report = _run_refresh(cli_env, as_of=date(2025, 12, 31))
+    store, report = _run_refresh(cli_env)
     assert report.n_missing_group > 50
     assert profile.call_count == 50
     assert _fmp_calls() <= 60
+    # current members are classified first: every profile call was for a current member
+    asked = {c.request.url.params["symbol"] for c in profile.calls}
+    assert asked <= set(_current_symbols())
+    assert report.n_unclassified == len(_historical_only(store)) - 5
 
 
 @respx.mock
@@ -801,35 +837,39 @@ def test_missing_rename_map_fails_loudly(cli_env, tmp_path, monkeypatch):
     result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
     assert result.exit_code == 1
     assert "BNY" in result.output and "FISV" in result.output
-    assert "no membership row on 2026-10-20" in result.output
+    assert "exactly one open membership row" in result.output
     store = Store(cli_env)
     assert store.read("SELECT count(*) AS n FROM membership")["n"][0] == 0  # nothing persisted
     logged = store.read("SELECT status FROM ingest_log WHERE source = ?", ["universe"])
     assert logged["status"].to_list() == ["failed"]
-    # a back-dated run is judged against its own as_of and fails too, naming the symbols
+    # AMD-0015 2A: the invariant does not depend on --date; a back-dated run (inside the
+    # 7-day window) with the map dropped fails too, naming the symbols (AC9)
     respx.reset()
     _mock_sources(fmp_status=402)
-    back = runner.invoke(app, ["universe", "refresh", "--date", "2025-12-31"])
+    back = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-14"])
     assert back.exit_code == 1
     for sym in ("BNY", "FISV", "MRSH", "SKYD", "VMRK"):
         assert sym in back.output
-    assert "no membership row on 2025-12-31" in back.output
+    assert "exactly one open membership row" in back.output
+    assert store.read("SELECT count(*) AS n FROM membership")["n"][0] == 0
 
 
 @respx.mock
-def test_back_dated_run_with_map_passes_and_ignores_later_additions(cli_env):
+def test_back_dated_run_within_window_holds_the_invariant(cli_env):
+    # AMD-0015 2A / AC9: the invariant is against the fetched table, whatever --date is
     _mock_sources(fmp_status=402)
-    store, report = _run_refresh(cli_env, as_of=date(2025, 12, 31))
-    assert report.current_members_without_row == 0
-    assert report.n_current_table == 503 and report.n_members_today != report.n_current_table
-    wiki = fetch_wikipedia_constituents(_wiki_client())
-    later = wiki.filter(pl.col("date_added") > date(2025, 12, 31))["symbol"].to_list()
-    assert len(later) >= 10  # additions after as_of are not orphans ...
-    members = set(store.members_on(date(2025, 12, 31)))
-    assert not members & set(later)  # ... and are not members either
-    assert {"BNY", "FISV", "MRSH", "SKYD", "VMRK"} <= members
-    assert not {"BK", "FI", "MMC", "PSKY", "EQR"} & members
-    result = runner.invoke(app, ["universe", "refresh", "--date", "2025-12-31"])
+    for as_of in (date(2026, 10, 14), date(2026, 10, 13)):  # 6 and exactly 7 days back
+        store, report = _run_refresh(cli_env, as_of=as_of)
+        assert report.current_members_without_row == 0
+        assert report.current_members_without_row_symbols == []
+        assert report.n_current_table == 503 == report.n_members_today
+        open_syms = set(
+            store.read("SELECT symbol FROM membership WHERE end_date IS NULL")["symbol"].to_list()
+        )
+        assert set(_current_symbols()) <= open_syms
+        assert {"BNY", "FISV", "MRSH", "SKYD", "VMRK"} <= set(store.members_on(as_of))
+        assert not {"BK", "FI", "MMC", "PSKY", "EQR"} & set(store.members_on(as_of))
+    result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-14"])
     assert result.exit_code == 0, result.output
     assert "current members without row: 0" in result.output
 
@@ -838,59 +878,66 @@ def _current_rows(*pairs):
     return [{"symbol": s_, "date_added": d} for s_, d in pairs]
 
 
-def test_orphans_before_h_unrenamed_tickers_are_continuity_not_orphans():
-    # as_of before H: nothing has been renamed yet, the OLD ticker is the member
-    as_of = date(2025, 6, 30)
-    hanshof = _mini_hanshof().filter(pl.col("date") <= as_of)
-    hanshof = pl.concat([hanshof, pl.DataFrame({"date": [as_of], "symbols": [["AAA", "OLDX"]]})])
-    current = _current_rows(("AAA", date(2010, 1, 4)), ("NEWX", date(2010, 1, 4)),
-                            ("LATE", date(2025, 7, 1)))  # LATE joined after as_of
-    renames = [Rename("OLDX", "NEWX", None)]
-    m = build_membership(hanshof, None, _no_changes(), as_of=as_of, renames=renames,
-                         current_symbols={"AAA", "NEWX", "LATE"})
-    assert members_on_date(m, as_of) == {"AAA", "OLDX"}
-    assert find_orphans(m, current, renames, as_of) == []
-    # without the map NEWX is a current symbol that was not a member under that name: orphan
-    assert find_orphans(m, current, [], as_of) == ["NEWX"]
-    # a symbol added on/before as_of with no row is an orphan; after as_of it is not
-    early = _current_rows(("AAA", date(2010, 1, 4)), ("LATE", date(2025, 6, 30)))
-    assert find_orphans(m, early, renames, as_of) == ["LATE"]
+def test_open_row_invariant_is_a_plain_open_interval_test():
+    # AMD-0015 2A: every current-table symbol has exactly one row with end_date IS NULL;
+    # there is no as_of in the rule
+    hanshof = pl.DataFrame({"date": [date(2024, 1, 2)], "symbols": [["AAA", "BBB"]]})
+    m = build_membership(hanshof, None, _no_changes(), as_of=date(2024, 6, 1))
+    cur = _current_rows(("AAA", date(2010, 1, 4)), ("BBB", date(2010, 1, 4)))
+    assert current_members_without_open_row(m, cur) == []
+    # a current symbol with no row at all, however old its Date added: named
+    cur2 = cur + _current_rows(("CCC", date(2010, 1, 4)))
+    assert current_members_without_open_row(m, cur2) == ["CCC"]
+    # a symbol whose only interval is closed has no open row: named
+    closed = pl.DataFrame(
+        {"symbol": ["AAA", "BBB"], "start_date": [date(2024, 1, 2)] * 2,
+         "end_date": [None, date(2024, 3, 1)], "source": ["hanshof", "hanshof"]},
+        schema={"symbol": pl.String, "start_date": pl.Date, "end_date": pl.Date,
+                "source": pl.String},
+    )
+    assert current_members_without_open_row(closed, cur) == ["BBB"]
+    # two open rows is not "exactly one": named
+    twice = pl.concat([m, m.filter(pl.col("symbol") == "AAA").with_columns(
+        start_date=pl.lit(date(2024, 2, 1)))])
+    assert current_members_without_open_row(twice, cur) == ["AAA"]
+    # a symbol added after any run date is still named: no exemption exists
+    late = _current_rows(("AAA", date(2010, 1, 4)), ("LATE", date(2030, 1, 1)))
+    assert current_members_without_open_row(m, late) == ["LATE"]
 
 
-def test_orphans_unmapped_hanshof_internal_rename_is_named():
-    # PARA->PSKY-style step inside hanshof, not in the map: the later ticker has no row at an
-    # earlier as_of and nothing explains it, so it is named
-    as_of = date(2024, 6, 30)
+def test_unmapped_hanshof_internal_rename_is_named():
+    # PARA->PSKY-style step inside hanshof, not in the map: the later ticker has no open row
     hanshof = pl.DataFrame({"date": [date(2024, 1, 2)], "symbols": [["AAA", "PARA"]]})
-    m = build_membership(hanshof, None, _no_changes(), as_of=as_of)
+    m = build_membership(hanshof, None, _no_changes(), as_of=date(2024, 6, 30))
     cur = _current_rows(("AAA", date(2010, 1, 4)), ("SKYD", date(1994, 9, 30)))
-    assert find_orphans(m, cur, [Rename("PSKY", "SKYD", None)], as_of) == ["SKYD"]
+    assert current_members_without_open_row(m, cur) == ["SKYD"]
 
 
 @respx.mock
-def test_known_effective_after_as_of_keeps_old_ticker_a_member(cli_env, tmp_path, monkeypatch):
-    # a mapped rename that has not happened yet at as_of: old stays a member (not a bounded
-    # removal), the new ticker is not yet a member and not an orphan
+def test_known_effective_in_the_future_fails_loudly(cli_env, tmp_path, monkeypatch):
+    # AMD-0015 2A: a mapped rename that has not happened yet leaves the new ticker with no open
+    # row, so the unconditional invariant fails and names it; nothing is written
     cfg = tmp_path / "cfg"
     cfg.mkdir()
     for name in ("gics.yaml", "universe.yaml"):
         shutil.copy(CONFIG / name, cfg / name)
     text = (CONFIG / "ticker_renames.yaml").read_text().replace(
-        "{old: BK, new: BNY, effective: null}", "{old: BK, new: BNY, effective: 2026-03-02}"
+        "{old: BK, new: BNY, effective: null}", "{old: BK, new: BNY, effective: 2026-11-02}"
     )
+    assert "2026-11-02" in text
     (cfg / "ticker_renames.yaml").write_text(text)
     monkeypatch.setenv("ARGUS_CONFIG_DIR", str(cfg))
     _mock_sources(fmp_status=402)
-    store, report = _run_refresh(cli_env, as_of=date(2025, 12, 31))
-    members = set(store.members_on(date(2025, 12, 31)))
-    assert "BK" in members and "BNY" not in members
+    with pytest.raises(MembershipInvariantError, match="BNY"):
+        _run_refresh(cli_env, as_of=date(2026, 10, 20))
+    assert Store(cli_env).read("SELECT count(*) AS n FROM membership")["n"][0] == 0
+    # once the effective date has passed (the run date moves on) the same map passes
+    monkeypatch.setattr("argus.data.universe._today_utc", lambda: date(2026, 11, 3))
+    store, report = _run_refresh(cli_env, as_of=date(2026, 11, 3))
     assert report.current_members_without_row == 0
-    store2, _ = _run_refresh(cli_env, as_of=date(2026, 10, 20))
-    after = set(store2.members_on(date(2026, 10, 20)))
-    assert "BNY" in after and "BK" not in after
-    assert store2.members_on(date(2026, 3, 2)).count("BNY") == 1
-    assert "BK" not in store2.members_on(date(2026, 3, 2))
-    assert "BK" in store2.members_on(date(2026, 2, 27))
+    assert store.members_on(date(2026, 11, 2)).count("BNY") == 1
+    assert "BK" not in store.members_on(date(2026, 11, 2))
+    assert "BK" in store.members_on(date(2026, 10, 30))
 
 
 @respx.mock
@@ -899,6 +946,179 @@ def test_cli_prints_invariant_fields(cli_env):
     result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
     assert result.exit_code == 0, result.output
     assert "current table symbols: 503" in result.output
+    assert "unclassified historical symbols:" in result.output
     assert "current members without row: 0" in result.output
     assert "members on 2026-10-20: 503" in result.output
     assert "rename-bounded=10" in result.output
+
+
+# ---------------------------------------------------------------- AC10 (AMD-0015 2A)
+def test_check_refresh_date_window():
+    check_refresh_date(date(2026, 10, 20))  # today
+    check_refresh_date(date(2026, 10, 13))  # exactly 7 days
+    check_refresh_date(date(2026, 11, 5))  # future: unchanged behaviour
+    with pytest.raises(BackDatedRefreshError, match="no historical snapshot"):
+        check_refresh_date(date(2026, 10, 12))  # 8 days
+
+
+@respx.mock
+def test_back_dated_refresh_is_refused_and_writes_nothing(cli_env):
+    # first a normal run so the store has real contents to compare against
+    _mock_sources(fmp_status=402)
+    ok = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
+    assert ok.exit_code == 0, ok.output
+    store = Store(cli_env)
+    before = _counts(store)
+    assert all(n > 0 for n in before.values())
+    respx.reset()
+    _mock_sources(fmp_status=402)
+    result = runner.invoke(app, ["universe", "refresh", "--date", "2026-09-20"])  # 30 days
+    assert result.exit_code == 2, result.output
+    assert "no historical snapshot" in result.output
+    assert _counts(store) == before  # symbols, membership and ingest_log all unchanged
+    assert len(respx.calls) == 0  # decided before any fetch
+    # the 8th day back is refused, the 7th is not
+    assert runner.invoke(app, ["universe", "refresh", "--date", "2026-10-12"]).exit_code == 2
+    respx.reset()
+    _mock_sources(fmp_status=402)
+    assert runner.invoke(app, ["universe", "refresh", "--date", "2026-10-13"]).exit_code == 0
+
+
+@respx.mock
+def test_refused_refresh_does_not_even_create_the_store(cli_env):
+    _mock_sources(fmp_status=402)
+    result = runner.invoke(app, ["universe", "refresh", "--date", "2025-01-01"])
+    assert result.exit_code == 2
+    assert not cli_env.exists()  # no Store opened or initialised
+    assert len(respx.calls) == 0
+
+
+@respx.mock
+def test_refresh_function_refuses_back_dated_too(cli_env):
+    _mock_sources(fmp_status=402)
+    store = Store(cli_env)
+    with httpx.Client() as http, pytest.raises(BackDatedRefreshError):
+        refresh(store, get_settings(), http, as_of=date(2026, 9, 1))
+    assert not cli_env.exists()
+
+
+@respx.mock
+def test_today_and_last_trading_day_succeed(cli_env):
+    last_td = previous_trading_day(date(2026, 10, 20))
+    assert last_td == date(2026, 10, 19)
+    for arg in ("2026-10-20", last_td.isoformat()):
+        respx.reset()
+        _mock_sources(fmp_status=402)
+        result = runner.invoke(app, ["universe", "refresh", "--date", arg])
+        assert result.exit_code == 0, result.output
+    respx.reset()
+    _mock_sources(fmp_status=402)
+    default = runner.invoke(app, ["universe", "refresh"])  # no --date = today (pinned)
+    assert default.exit_code == 0, default.output
+    assert "members on 2026-10-20: 503" in default.output
+
+
+# ---------------------------------------------------------------- AMD-0016 2C classification
+RENAMED = {"BK": "BNY", "FI": "FISV", "MMC": "MRSH", "PSKY": "SKYD", "EQR": "VMRK"}
+
+
+@respx.mock
+def test_symbols_covers_every_membership_symbol(cli_env):
+    _mock_sources(fmp_status=402, profile_status=402)
+    store, report = _run_refresh(cli_env)
+    missing = store.read(
+        "SELECT DISTINCT symbol FROM membership WHERE symbol NOT IN (SELECT symbol FROM symbols)"
+    )
+    assert missing.height == 0
+    hist = _historical_only(store)
+    assert len(hist) > 200
+    active = store.read(
+        "SELECT symbol, active FROM symbols WHERE symbol IN (SELECT symbol FROM membership)"
+    )
+    flags = dict(zip(active["symbol"].to_list(), active["active"].to_list(), strict=True))
+    assert all(flags[s_] is False for s_ in hist)  # historical-only: active=false
+    assert all(flags[s_] is True for s_ in _current_symbols())  # current stay active
+    assert all(is_valid(s_) for s_ in store.read("SELECT symbol FROM symbols")["symbol"].to_list())
+    # re-running keeps the same states (the deactivation pass leaves historical rows alone)
+    store2, _ = _run_refresh(cli_env)
+    again = store2.read(
+        "SELECT symbol, active FROM symbols WHERE symbol IN (SELECT symbol FROM membership)"
+    )
+    assert dict(zip(again["symbol"].to_list(), again["active"].to_list(), strict=True)) == flags
+    assert report.n_symbols == store.read("SELECT count(*) AS n FROM symbols")["n"][0]
+
+
+@respx.mock
+def test_mapped_old_tickers_take_the_new_tickers_group(cli_env):
+    # even with profile unavailable: a rename is the same company
+    _mock_sources(fmp_status=402, profile_status=402)
+    store, report = _run_refresh(cli_env)
+    rows = {
+        r["symbol"]: (r["gics_sector"], r["gics_industry_group"], r["active"])
+        for r in store.read("SELECT * FROM symbols").iter_rows(named=True)
+    }
+    for old, new in RENAMED.items():
+        assert rows[new][1] and rows[new][0], new
+        assert rows[old][:2] == rows[new][:2], (old, new)
+        assert rows[old][2] is False and rows[new][2] is True
+    # all the others are NULL and counted; the five renamed are not
+    hist = _historical_only(store)
+    assert report.n_unclassified == len(hist) - len(RENAMED)
+    nulls = store.read(
+        "SELECT count(*) AS n FROM symbols WHERE NOT active AND gics_industry_group IS NULL"
+    )["n"][0]
+    assert nulls == report.n_unclassified
+
+
+@respx.mock
+def test_historical_only_symbol_classified_from_profile_200(cli_env):
+    profile = _mock_sources(
+        fmp_status=402, profile=[{"symbol": "X", "industry": "Semiconductors"}]
+    )
+    # fmp_status only 402s the non-profile endpoints; profile answers 200
+    store, report = _run_refresh(cli_env)
+    group = "Semiconductors & Semiconductor Equipment"
+    got = store.read("SELECT * FROM symbols WHERE symbol = ?", ["AAL"])  # first historical-only
+    assert got["gics_industry_group"][0] == group and got["active"][0] is False
+    assert got["gics_sector"][0] == "Information Technology"
+    assert profile.call_count == 50  # the shared cap, spent on historical-only symbols
+    hist = _historical_only(store)
+    assert report.n_unclassified == len(hist) - len(RENAMED) - 50
+    assert report.n_missing_group == 0 and _fmp_calls() <= 60
+
+
+@respx.mock
+def test_historical_profile_402_is_not_an_error_and_is_counted(cli_env):
+    profile = _mock_sources(fmp_status=402, profile_status=402)
+    result = runner.invoke(app, ["universe", "refresh", "--date", "2026-10-20"])
+    assert result.exit_code == 0, result.output  # n_unclassified never sets an exit code
+    assert profile.call_count == 1  # first 402 ends profile calls
+    store = Store(cli_env)
+    hist = _historical_only(store)
+    assert f"unclassified historical symbols: {len(hist) - len(RENAMED)}" in result.output
+    aal = store.read("SELECT * FROM symbols WHERE symbol = ?", ["AAL"])
+    assert aal["gics_industry_group"][0] is None and aal["active"][0] is False
+    assert "missing industry group: 0" in result.output  # current-member rule unchanged
+    logged = store.read("SELECT status FROM ingest_log WHERE source = ?", ["universe"])
+    assert logged["status"].to_list() == ["ok"]
+
+
+@respx.mock
+def test_current_members_are_classified_before_historical_ones(cli_env):
+    # one current member needs the profile fallback; profile answers 200 for everyone. If the
+    # historical-only symbols (a lot more than the cap) were classified first they would eat the
+    # whole cap and the current member would be left without a group.
+    broken = WIKI_HTML.replace("<td>Semiconductors</td>", "<td>Quantum Widgets</td>", 1)
+    profile = _mock_sources(
+        wiki_html=broken, fmp_status=402, profile=[{"symbol": "X", "industry": "Semiconductors"}]
+    )
+    wiki = fetch_wikipedia_constituents(_wiki_client(broken))
+    victim = wiki.filter(pl.col("gics_sub_industry") == "Quantum Widgets")["symbol"][0]
+    store, report = _run_refresh(cli_env)
+    assert profile.calls[0].request.url.params["symbol"] == victim  # asked first
+    assert report.n_missing_group == 0
+    row = store.read("SELECT * FROM symbols WHERE symbol = ?", [victim])
+    assert row["gics_industry_group"][0] == "Semiconductors & Semiconductor Equipment"
+    assert row["active"][0] is True
+    assert profile.call_count == 50 and _fmp_calls() <= 60
+    assert len(_historical_only(store)) > 200  # ~240 historical-only symbols, 50 calls

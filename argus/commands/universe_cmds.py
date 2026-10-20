@@ -1,15 +1,21 @@
 """`argus universe refresh` (WO-0003; AMD-0002 command module)."""
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Annotated
 
 import httpx
 import typer
 
 from argus.commands.universe import app
+from argus.data import universe as universe_mod
 from argus.data.providers.base import ProviderError
 from argus.data.store import Store
-from argus.data.universe import MAX_BOUNDED_ROWS, SRC_DERIVED_BOUNDED, refresh
+from argus.data.universe import (
+    MAX_BOUNDED_ROWS,
+    SRC_DERIVED_BOUNDED,
+    BackDatedRefreshError,
+    refresh,
+)
 from argus.settings import ConfigError, get_settings
 
 _HTTP_TIMEOUT = 30.0
@@ -26,7 +32,12 @@ def refresh_cmd(
 ) -> None:
     """Populate symbols (GICS) and point-in-time S&P 500 membership."""
     settings = get_settings()
-    as_of = date_.date() if date_ is not None else datetime.now(UTC).date()
+    as_of = date_.date() if date_ is not None else universe_mod._today_utc()
+    try:  # AC10: decided before the store is opened or initialised, so nothing is written
+        universe_mod.check_refresh_date(as_of)
+    except BackDatedRefreshError as exc:
+        typer.echo(f"universe refresh refused: {exc}", err=True)
+        raise typer.Exit(2) from None
     store = Store(settings.argus_store_dir)
     store.init_schema()
     try:
@@ -41,6 +52,8 @@ def refresh_cmd(
     healthy = report.n_missing_group == 0 and not too_many_bounded
     status = "ok" if healthy else "failed"
     detail = f"gap route {report.gap_route}; " + ",".join(report.sources_used)
+    if report.n_unclassified:
+        detail = f"{report.n_unclassified} unclassified historical symbols; {detail}"
     if report.n_missing_group:
         detail = f"{report.n_missing_group} symbols without industry group; {detail}"
     if too_many_bounded:
@@ -51,6 +64,7 @@ def refresh_cmd(
     typer.echo(f"current table symbols: {report.n_current_table}")
     typer.echo(f"current members without row: {report.current_members_without_row}")
     typer.echo(f"missing industry group: {report.n_missing_group}")
+    typer.echo(f"unclassified historical symbols: {report.n_unclassified}")
     typer.echo(f"membership rows: {report.membership_rows}")
     typer.echo(f"sources: {', '.join(report.sources_used)}")
     typer.echo(f"membership gap route: {report.gap_route}")

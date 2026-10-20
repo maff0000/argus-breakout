@@ -464,15 +464,14 @@ def _apply_renames(
     current: set[str],
     last_hanshof: date,
     as_of: date | None,
-) -> set[str]:
+) -> None:
     """Turn each applicable mapped pair into one continuous membership (AMD-0014 2C).
 
     Applies only when the NEW ticker is a current member with no open interval and the OLD
     ticker is open at the gap; a pair already covered by explicit change rows is untouched.
-    Returns the OLD tickers of pairs whose rename has not yet happened at `as_of`: they stay
-    open (a back-dated run), they are not bounded removals.
+    A rename whose start lies after `as_of` is not applied: the new ticker then has no open
+    row and the unconditional invariant (AMD-0015 2A) fails loudly.
     """
-    pending: set[str] = set()
     for r in renames:
         if r.new not in current or r.new in open_ or r.old not in open_:
             continue
@@ -486,7 +485,6 @@ def _apply_renames(
             log.warning("rename_not_after_hanshof_ignored", old=r.old, new=r.new)
             continue
         if as_of is not None and new_start > as_of:
-            pending.add(r.old)
             continue
         began, _ = open_.pop(r.old)
         closed.append((r.old, began, old_end, src))
@@ -499,7 +497,6 @@ def _apply_renames(
             old_closes=old_end.isoformat(),
             new_opens=new_start.isoformat(),
         )
-    return pending
 
 
 # ---------------------------------------------------------------------- membership
@@ -573,8 +570,8 @@ def build_membership(
         _apply_renames(open_, closed, renames, current_set, last_hanshof, as_of)
     elif current_table is not None and (as_of is None or as_of > last_hanshof):
         current = set(current_table["symbol"].to_list())
-        pending = _apply_renames(open_, closed, renames, current, last_hanshof, as_of)
-        for sym in sorted(set(open_) - current - pending):  # left the index somewhere in (H, today]
+        _apply_renames(open_, closed, renames, current, last_hanshof, as_of)
+        for sym in sorted(set(open_) - current):  # left the index somewhere in (H, today]
             began, _ = open_.pop(sym)
             closed.append((sym, began, last_hanshof, SRC_DERIVED_BOUNDED))
         added = current_table.filter(pl.col("date_added") > last_hanshof)
@@ -658,6 +655,9 @@ class UniverseReport:
     # AMD-0014 2B: current-table symbols with no open (end_date IS NULL) membership interval
     current_members_without_row: int = 0
     current_members_without_row_symbols: list[str] = field(default_factory=list)
+    # AMD-0016 2C: symbols that only ever appear in `membership` (not current, not ETFs) and
+    # were left without an industry group; counted, never an error and never a default
+    n_unclassified: int = 0
 
 
 def members_on_date(membership: pl.DataFrame, d: date) -> set[str]:
@@ -669,28 +669,40 @@ def members_on_date(membership: pl.DataFrame, d: date) -> set[str]:
     )
 
 
-def find_orphans(
-    membership: pl.DataFrame, current: list[dict], renames: list[Rename], as_of: date
-) -> list[str]:
-    """Current-table symbols that break the membership invariant at `as_of` (AMD-0014 2B).
+def current_members_without_open_row(membership: pl.DataFrame, current: list[dict]) -> list[str]:
+    """Current-table symbols that do not have exactly one open (`end_date IS NULL`) interval.
 
-    Orphan: `Date added` <= as_of (or unknown) and no membership interval contains `as_of`.
-    Not an orphan: a symbol added after `as_of`, or the NEW ticker of a mapped rename whose
-    OLD ticker is a member at `as_of` (the rename has not happened yet: continuity).
+    The AMD-0014 / AMD-0015 2A invariant, always evaluated against the fetched current
+    constituents table and independent of the run date (CI-1).
     """
-    on_as_of = members_on_date(membership, as_of)
-    old_of = {r.new: r.old for r in renames}
-    return [
-        r["symbol"]
-        for r in current
-        if (r["date_added"] is None or r["date_added"] <= as_of)
-        and r["symbol"] not in on_as_of
-        and old_of.get(r["symbol"]) not in on_as_of
-    ]
+    open_counts: dict[str, int] = {}
+    for sym in membership.filter(pl.col("end_date").is_null())["symbol"].to_list():
+        open_counts[sym] = open_counts.get(sym, 0) + 1
+    return [r["symbol"] for r in current if open_counts.get(r["symbol"], 0) != 1]
 
 
 def _today_utc() -> date:
     return datetime.now(UTC).date()
+
+
+# AMD-0015 2A: the constituents table exists only as of now; a refresh dated further back
+# than this cannot be correct, so it is refused rather than given invented semantics.
+MAX_BACKDATE_DAYS = 7
+
+
+class BackDatedRefreshError(ValueError):
+    """`--date` is too far in the past for a refresh to be correct (AMD-0015 2A, AC10)."""
+
+
+def check_refresh_date(as_of: date) -> None:
+    """Raise BackDatedRefreshError if `as_of` is more than 7 calendar days before today (UTC)."""
+    today = _today_utc()
+    if (today - as_of).days > MAX_BACKDATE_DAYS:
+        raise BackDatedRefreshError(
+            f"--date {as_of.isoformat()} is more than {MAX_BACKDATE_DAYS} days before "
+            f"{today.isoformat()}: the current constituents table has no historical snapshot, "
+            "so a back-dated refresh cannot be correct"
+        )
 
 
 def _resolve_current(
@@ -723,8 +735,9 @@ def refresh(
     store: Store, settings: Settings, http: httpx.Client, as_of: date | None = None
 ) -> UniverseReport:
     """Populate `symbols` and rebuild `membership`; returns a UniverseReport."""
-    settings.require("fmp_api_key")
     as_of = as_of or _today_utc()
+    check_refresh_date(as_of)  # before anything is read, fetched or written (AC10)
+    settings.require("fmp_api_key")
     gics = _load_yaml(settings.argus_config_dir, "gics.yaml")
     universe_cfg = _load_yaml(settings.argus_config_dir, "universe.yaml")
     etfs = configured_etfs(universe_cfg)
@@ -800,49 +813,54 @@ def refresh(
     if bad:
         raise ValueError(f"non-canonical membership symbols: {bad[:5]}")
 
-    # --- AMD-0014 2B: ALWAYS enforced, before anything is written (see find_orphans)
-    on_as_of = members_on_date(membership, as_of)
-    without_row = find_orphans(membership, current, renames, as_of)
+    # --- AMD-0014 2B / AMD-0015 2A: ALWAYS enforced, independent of --date, before any write
+    without_row = current_members_without_open_row(membership, current)
     n_current_table = len(current)
     if without_row:
         raise MembershipInvariantError(
-            f"{len(without_row)} current index members have no membership row on "
-            f"{as_of.isoformat()}: {', '.join(without_row)} "
-            "(a ticker rename missing from ticker_renames.yaml? AMD-0014)"
+            f"{len(without_row)} current index members do not have exactly one open membership "
+            f"row: {', '.join(without_row)} "
+            "(a ticker rename missing from ticker_renames.yaml, or not yet effective? AMD-0014)"
         )
-    # Equal counts hold only for today or later; a back-dated run reports both, no comparison.
-    check_count = as_of >= _today_utc()
-    if check_count and len(on_as_of) != n_current_table:
+    on_as_of = members_on_date(membership, as_of)
+    if len(on_as_of) != n_current_table:
         raise MembershipInvariantError(
             f"membership on {as_of.isoformat()} has {len(on_as_of)} members but the current "
             f"table has {n_current_table} symbols"
         )
 
-    # --- industry group for every current member (no silent defaults)
+    # --- industry group for every current member (no silent defaults), then for historical-only
+    # symbols (AMD-0016 2C). One cap and one availability flag cover BOTH cohorts, and current
+    # members are classified first, so a historical symbol can never starve a current one.
     valid_sectors = set(gics["sectors"])
     group_sector: dict[str, str] = gics["industry_groups"]
     rows: list[dict] = []
     missing: list[str] = []
     fallbacks = 0
     profile_unavailable = False
+
+    def via_profile(sym: str) -> str | None:
+        nonlocal fallbacks, profile_unavailable
+        if fallbacks >= MAX_PROFILE_FALLBACKS or profile_unavailable:
+            return None
+        fallbacks += 1
+        try:
+            group = map_industry_group(fmp.profile(sym).get("industry"), gics)
+        except ProviderUnavailable:
+            profile_unavailable = True  # 402/403: stop spending calls, not an error
+            return None
+        except (ProviderError, ValueError):
+            return None
+        if "fmp:profile" not in sources:
+            sources.append("fmp:profile")
+        return group
+
     for rec in current:
         sym = rec["symbol"]
-        group: str | None = None
         try:
-            group = map_industry_group(rec["sub_industry"], gics)
+            group: str | None = map_industry_group(rec["sub_industry"], gics)
         except ValueError:
-            if fallbacks < MAX_PROFILE_FALLBACKS and not profile_unavailable:
-                fallbacks += 1
-                try:
-                    prof = fmp.profile(sym)
-                    group = map_industry_group(prof.get("industry"), gics)
-                    if "fmp:profile" not in sources:
-                        sources.append("fmp:profile")
-                except ProviderUnavailable:
-                    profile_unavailable = True  # counts as unmapped; stop spending calls
-                    group = None
-                except (ProviderError, ValueError):
-                    group = None
+            group = via_profile(sym)
         if group is None:
             missing.append(sym)
         sector = group_sector[group] if group else rec["sector"]
@@ -859,6 +877,31 @@ def refresh(
         )
     if missing:
         log.warning("missing_industry_group", count=len(missing), symbols=missing[:20])
+
+    current_rows = {r["symbol"]: r for r in rows}
+    new_of_old = {r.old: r.new for r in renames}
+    historical_only = sorted(set(membership["symbol"].to_list()) - set(current_rows) - set(etfs))
+    n_unclassified = 0
+    for sym in historical_only:
+        target = current_rows.get(new_of_old.get(sym, ""))
+        if target is not None and target["gics_industry_group"]:
+            group, sector = target["gics_industry_group"], target["gics_sector"]  # same company
+        else:
+            group = via_profile(sym)
+            sector = group_sector[group] if group else None
+        if group is None:
+            n_unclassified += 1
+        rows.append(
+            {
+                "symbol": sym,
+                "name": None,
+                "gics_sector": sector,
+                "gics_industry_group": group,
+                "active": False,
+            }
+        )
+    if n_unclassified:
+        log.warning("unclassified_historical_symbols", count=n_unclassified)
 
     etf_rows = [
         {
@@ -891,7 +934,7 @@ def refresh(
         for k, v in membership.group_by("source").len().sort("source").iter_rows()
     }
     n_members_today = len(store.members_on(as_of))
-    if check_count and n_members_today != n_current_table:
+    if n_members_today != n_current_table:
         raise MembershipInvariantError(
             f"members_on({as_of.isoformat()}) returned {n_members_today} but the current table "
             f"has {n_current_table} symbols (AMD-0014)"
@@ -908,6 +951,7 @@ def refresh(
         n_current_table=n_current_table,
         current_members_without_row=len(without_row),
         current_members_without_row_symbols=without_row,
+        n_unclassified=n_unclassified,
     )
 
 
