@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.7 (`adjust materialise`) ; `DESIGN.md` §3.2 (`bars`, `etf_bars`), §3.3 (adjustment rule) |
-| **Applicable Amendments** | AMD-0002, AMD-0012 |
+| **Applicable Amendments** | AMD-0002, AMD-0012, AMD-0016 |
 | **Base SHA** | main at Closure of WO-0004 and WO-0005 |
 | **Branch** | `wo/0007-adjust-and-materialise` |
 | **Depends on** | WO-0004, WO-0005 |
@@ -34,7 +34,10 @@ argus/data/adjust.py                 create  select_source(raw: pl.DataFrame) ->
                                              materialise(store, symbols: list[str] | None) -> MaterialiseReport(n_symbols, n_rows, n_readjusted, warnings)
                                                (reads bars_raw + `splits` + `dividends`, builds bars/etf_bars per symbol, writes via store.write_bars /
                                                 write_etf_bars; adj_version = previous + 1 only when apply_splits changed rows; records ingest_log(source='materialise'))
-argus/data/store.py                  modify  add write_etf_bars(df) / read_etf_bars(...) mirroring bars; add read_splits(...) and read_dividends(...) (AMD-0012)
+argus/data/store.py                  modify  add write_etf_bars(df) / read_etf_bars(...) mirroring bars; add read_splits(...) and
+                                             read_dividends(...) (AMD-0012); add resolve_symbol(symbol, as_of) -> str following the
+                                             config/ticker_renames.yaml chain FORWARD to the symbol under which bars for that date are
+                                             stored, recording the redirection (AMD-0016 §2D)
 argus/commands/adjust_cmds.py        create  `adjust materialise [--symbols S1,S2]` (registers onto argus.commands.adjust.app)
 argus/cli.py                         modify  add exactly one import line for argus.commands.adjust_cmds in the append-only block (AMD-0002)
 tests/fixtures/adjust/raw_two_sources.parquet   create  one symbol with Polygon and yfinance overlap (identical closes within 0.01) and a disagreeing day
