@@ -1,8 +1,14 @@
+from datetime import date
+
+import duckdb
+import polars as pl
+import pytest
+
 from argus.data.schema import DDL, SCHEMA_VERSION
 from argus.data.store import Store
 
 DESIGN_TABLES = [
-    "symbols", "membership", "bars_raw", "adjustments", "bars", "etf_bars", "iv_daily",
+    "symbols", "membership", "bars_raw", "splits", "dividends", "bars", "etf_bars", "iv_daily",
     "composites", "features", "market_daily", "sector_daily", "events", "ranks",
     "evidence_packs", "briefs", "reconcile_log", "ingest_log", "schema_version",
 ]
@@ -18,7 +24,7 @@ def _tables(store):
 def test_all_design_tables_present(tmp_path):
     store = Store(tmp_path / "store")
     store.init_schema()
-    assert len(DESIGN_TABLES) == 18
+    assert len(DESIGN_TABLES) == 19
     assert set(DDL) == set(DESIGN_TABLES)
     assert _tables(store) == set(DESIGN_TABLES)
     assert (tmp_path / "store" / "argus.duckdb").is_file()
@@ -35,3 +41,54 @@ def test_init_idempotent(tmp_path):
     assert store.read("SELECT count(*) AS n FROM bars_raw")["n"][0] == 0
     assert store.read("SELECT count(*) AS n FROM bars")["n"][0] == 0
     assert store.read("SELECT count(*) AS n FROM etf_bars")["n"][0] == 0
+
+
+def _row(sym, d, val, src, col):
+    return pl.DataFrame({"symbol": [sym], "date": [d], col: [val], "source": [src]})
+
+
+def test_actions_tables_keyed_by_source(tmp_path):
+    store = Store(tmp_path / "store")
+    store.init_schema()
+    d = date(2024, 6, 10)
+    keys = ["symbol", "date", "source"]
+    store.upsert("splits", _row("AAA", d, 2.0, "polygon", "ratio"), keys)
+    store.upsert("splits", _row("AAA", d, 2.0, "yfinance", "ratio"), keys)
+    store.upsert("dividends", _row("AAA", d, 0.25, "polygon", "cash_amount"), keys)
+    store.upsert("dividends", _row("AAA", d, 0.25, "yfinance", "cash_amount"), keys)
+    splits = store.read("SELECT source FROM splits ORDER BY source")
+    divs = store.read("SELECT source FROM dividends ORDER BY source")
+    assert splits["source"].to_list() == ["polygon", "yfinance"]
+    assert divs["source"].to_list() == ["polygon", "yfinance"]
+    # a split and a dividend on the same (symbol, date) coexist, none nulled
+    assert store.read("SELECT ratio FROM splits WHERE source = ?", ["polygon"])["ratio"][0] == 2.0
+    cash = store.read("SELECT cash_amount FROM dividends WHERE source = ?", ["polygon"])
+    assert cash["cash_amount"][0] == 0.25
+    total = store.read(
+        "SELECT (SELECT count(*) FROM splits) + (SELECT count(*) FROM dividends) AS n"
+    )
+    assert total["n"][0] == 4
+
+
+def test_actions_measures_not_null(tmp_path):
+    store = Store(tmp_path / "store")
+    store.init_schema()
+    con = store.connect()
+    try:
+        with pytest.raises(duckdb.ConstraintException):
+            con.execute("INSERT INTO splits VALUES (?, ?, NULL, ?)", ["AAA", date(2024, 1, 2), "x"])
+        with pytest.raises(duckdb.ConstraintException):
+            con.execute(
+                "INSERT INTO dividends VALUES (?, ?, NULL, ?)", ["AAA", date(2024, 1, 2), "x"]
+            )
+    finally:
+        con.close()
+
+
+def test_schema_version_is_2(tmp_path):
+    store = Store(tmp_path / "store")
+    store.init_schema()
+    store.init_schema()
+    assert SCHEMA_VERSION == 2
+    sv = store.read("SELECT version FROM schema_version")
+    assert sv["version"].to_list() == [2]
