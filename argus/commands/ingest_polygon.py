@@ -1,11 +1,17 @@
-"""`argus ingest polygon` and `argus ingest polygon-actions` (WO-0004; AMD-0002 module)."""
+"""`argus ingest polygon`, `polygon-actions` and `revalidate` (WO-0004; AMD-0002, AMD-0018 2D)."""
 
 from datetime import date
 
 import typer
 
 from argus.commands.ingest import app
-from argus.data.ingest_polygon import backfill_polygon, ingest_polygon_actions, ingest_polygon_day
+from argus.data.ingest_polygon import (
+    IngestResult,
+    backfill_polygon,
+    ingest_polygon_actions,
+    ingest_polygon_day,
+    revalidate_range,
+)
 from argus.data.providers.base import ProviderError
 from argus.data.providers.polygon import PolygonClient
 from argus.data.store import Store
@@ -56,6 +62,10 @@ def polygon(
             results = backfill_polygon(store, client, start, end)
     finally:
         client.close()
+    _report(results, show_detail=day is not None)
+
+
+def _report(results: list[IngestResult], show_detail: bool) -> None:
     counts: dict[str, int] = {}
     for r in results:
         counts[r.status] = counts.get(r.status, 0) + 1
@@ -63,10 +73,26 @@ def polygon(
     summary = " ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "nothing to do"
     typer.echo(f"days={len(results)} rows={rows} {summary}")
     for r in results:
-        if r.status in ("rejected", "failed") and day is not None:
+        if r.status in ("quarantined", "failed") and show_detail:
             typer.echo(f"{r.status}: {r.detail}", err=True)
-    if counts.get("failed") or counts.get("rejected"):
+    if counts.get("failed"):
         raise typer.Exit(1)
+
+
+@app.command("revalidate")
+def revalidate(
+    start: str = typer.Option(..., "--start", help="First date (ISO)."),
+    end: str = typer.Option(..., "--end", help="Last date (ISO)."),
+) -> None:
+    """Re-judge stored bars_raw days: no API key, no network, bars_raw is never written."""
+    start_d, end_d = _iso(start), _iso(end)
+    if start_d > end_d:
+        typer.echo("--start must not be after --end", err=True)
+        raise typer.Exit(2)
+    settings = get_settings()
+    configure_logging(settings.argus_log_level)
+    results = revalidate_range(Store(settings.argus_store_dir), start_d, end_d)
+    _report(results, show_detail=False)
 
 
 @app.command("polygon-actions")

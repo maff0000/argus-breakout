@@ -8,7 +8,8 @@ DDL contains the placeholder `__GLOB__`, which `Store.init_schema` replaces
 with the quoted parquet glob under the configured store directory.
 """
 
-SCHEMA_VERSION = 2
+# 3: bar_flags (AMD-0018). 4 is reserved for WO-0012 store_meta.
+SCHEMA_VERSION = 3
 
 _BAR_VIEW = (
     "CREATE OR REPLACE VIEW {name} AS SELECT {cols} "
@@ -103,6 +104,11 @@ DDL: dict[str, str] = {
     "ingest_log": """CREATE TABLE IF NOT EXISTS ingest_log (
         date DATE, source TEXT, rows INTEGER, status TEXT, detail TEXT, finished_at TIMESTAMP,
         PRIMARY KEY (date, source, finished_at))""",
+    # Per-symbol-day data-quality findings (AMD-0018 2C). flag: jump_unexplained |
+    # jump_split_reconciled; the set is enumerated in argus/data/validate.py.
+    "bar_flags": """CREATE TABLE IF NOT EXISTS bar_flags (
+        symbol TEXT, date DATE, source TEXT, flag TEXT, detail TEXT,
+        PRIMARY KEY (symbol, date, source, flag))""",
     "schema_version": """CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER PRIMARY KEY, applied_at TIMESTAMP)""",
 }

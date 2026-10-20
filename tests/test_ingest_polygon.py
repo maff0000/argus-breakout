@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import date
 from pathlib import Path
@@ -15,6 +16,7 @@ from argus.data.ingest_polygon import (
     backfill_polygon,
     ingest_polygon_actions,
     ingest_polygon_day,
+    revalidate_range,
 )
 from argus.data.providers.polygon import PolygonClient
 from argus.data.store import Store
@@ -90,6 +92,33 @@ def _log(store, d):
     return store.read("SELECT status, rows, detail FROM ingest_log WHERE date = ?", [d])
 
 
+def _payload(mutate=None):
+    """Deep copy of the grouped-daily fixture with `mutate(row)` applied to each result row."""
+    body = json.loads(json.dumps(GROUPED))
+    if mutate:
+        for r in body["results"]:
+            mutate(r)
+    return body
+
+
+def _stored_count(store, d):
+    return store.read(
+        "SELECT count(*) AS n FROM bars_raw WHERE date = ? AND source = 'polygon'", [d]
+    )["n"][0]
+
+
+def _flags(store, d):
+    return store.read(
+        "SELECT symbol, flag, detail FROM bar_flags WHERE date = ? ORDER BY symbol, flag", [d]
+    )
+
+
+def _last_status(store, d):
+    return store.read(
+        "SELECT status FROM ingest_log WHERE date = ? ORDER BY finished_at DESC LIMIT 1", [d]
+    )["status"][0]
+
+
 @respx.mock
 def test_ok_day_written(store, client):
     _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
@@ -100,32 +129,36 @@ def test_ok_day_written(store, client):
     assert set(df["basis"]) == {"split"} and set(df["source"]) == {"polygon"}
     assert "NAA" not in df["symbol"].to_list()  # not in `symbols`
     assert _log(store, D).row(0)[0] == "ok"
+    assert "jump_rule_applied=False" in res.detail  # first-ever date: recorded, not a pass
 
 
 @respx.mock
-def test_rejected_day_not_written(store, client):
-    # pre-existing data for another day must stay untouched
-    store.write_bars_raw(
-        pl.DataFrame(
-            {
-                "symbol": ["SPY"], "date": [date(2026, 10, 15)], "open": [1.0], "high": [1.0],
-                "low": [1.0], "close": [1.0], "volume": [1.0], "source": ["polygon"],
-                "basis": ["split"],
-            }
-        )
-    )
-    before = store.read("SELECT count(*) AS n FROM bars_raw")["n"][0]
-    _grouped_route(lambda req: httpx.Response(200, json=_truncated(400)))  # ~80% coverage
+def test_quarantined_day_is_still_stored(store, client):
+    """CI-9: a quarantine verdict never prevents a fetched row being stored."""
+    day1 = date(2026, 10, 15)
+    _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
+    assert ingest_polygon_day(store, client, day1).status == "ok"
+    # day 2: ~80% coverage (quarantine) and three members move +50% (flags)
+    payload = _truncated(400)
+    for r in payload["results"]:
+        if r["T"] in ("MAA", "MAB", "MAC"):
+            r["c"] = r["c"] * 1.5
+    _grouped_route(lambda req: httpx.Response(200, json=payload))
     res = ingest_polygon_day(store, client, D)
-    assert res.status == "rejected" and res.rows == 0 and "coverage" in res.detail
-    assert store.read("SELECT count(*) AS n FROM bars_raw")["n"][0] == before
-    assert store.read_bars_raw(None, D, D, None).is_empty()
+    fetched = {r["T"] for r in payload["results"]} & set(MEMBERS + ETFS)
+    assert res.status == "quarantined" and "coverage" in res.detail
+    assert res.rows == len(fetched) > 0
+    assert _stored_count(store, D) == len(fetched)  # every fetched row is present
     row = _log(store, D).row(0, named=True)
-    assert row["status"] == "rejected" and row["rows"] == 0
+    assert row["status"] == "quarantined" and row["rows"] == len(fetched)
+    assert "jump_unexplained=3" in row["detail"]
+    fl = _flags(store, D)
+    assert fl["symbol"].to_list() == ["MAA", "MAB", "MAC"]
+    assert set(fl["flag"]) == {"jump_unexplained"}
 
 
 @respx.mock
-def test_missing_group_member_rejected_not_written(store, client):
+def test_missing_group_member_quarantined_but_stored(store, client):
     store.upsert(
         "symbols",
         pl.DataFrame({"symbol": ["MAA"], "gics_industry_group": [None], "active": [True]}),
@@ -133,8 +166,8 @@ def test_missing_group_member_rejected_not_written(store, client):
     )
     _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
     res = ingest_polygon_day(store, client, D)
-    assert res.status == "rejected" and "industry group" in res.detail
-    assert store.read_bars_raw(None, D, D, None).is_empty()
+    assert res.status == "quarantined" and "industry group" in res.detail
+    assert _stored_count(store, D) == res.rows == len(MEMBERS) + len(ETFS)
 
 
 def _add_historical(store, n=10, group=None):
@@ -174,7 +207,7 @@ def test_historical_unclassified_members_day_stored(store, client):
 
 
 @respx.mock
-def test_current_member_without_group_rejects_amid_historical(store, client):
+def test_current_member_without_group_quarantines_amid_historical(store, client):
     _add_historical(store, 10)
     store.upsert(
         "symbols",
@@ -183,16 +216,16 @@ def test_current_member_without_group_rejects_amid_historical(store, client):
     )
     _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
     res = ingest_polygon_day(store, client, D)
-    assert res.status == "rejected" and "current member" in res.detail
-    assert store.read_bars_raw(None, D, D, None).is_empty()
+    assert res.status == "quarantined" and "current member" in res.detail
+    assert store.read_bars_raw(None, D, D, "polygon").height == res.rows > 0
 
 
 @respx.mock
-def test_coverage_gate_still_rejects_with_historical_members(store, client):
+def test_coverage_gate_still_quarantines_with_historical_members(store, client):
     _add_historical(store, 10)
     _grouped_route(lambda req: httpx.Response(200, json=_truncated(400)))
     res = ingest_polygon_day(store, client, D)
-    assert res.status == "rejected" and "coverage" in res.detail
+    assert res.status == "quarantined" and "coverage" in res.detail
 
 
 @respx.mock
@@ -213,58 +246,177 @@ def test_provider_failure_logged_failed(store, client, monkeypatch):
 
 
 @respx.mock
-def test_jump_without_split_rejected_with_split_ok(store, client):
-    day1, day2 = date(2026, 10, 15), D
+def test_one_member_jump_is_a_flag_not_a_quarantine(store, client):
+    day1 = date(2026, 10, 15)
     _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
     assert ingest_polygon_day(store, client, day1).status == "ok"
-    jumped = json.loads(json.dumps(GROUPED))
-    for r in jumped["results"]:
-        if r["T"] == "MAA":
-            r["c"] = r["c"] * 1.5
+    jumped = _payload(lambda r: r.update(c=r["c"] * 1.5) if r["T"] == "MAA" else None)
     _grouped_route(lambda req: httpx.Response(200, json=jumped))
-    assert ingest_polygon_day(store, client, day2).status == "rejected"
-    store.upsert(
-        "splits",
-        pl.DataFrame({"symbol": ["MAA"], "date": [day2], "ratio": [2.0], "source": ["polygon"]}),
-        ["symbol", "date", "source"],
-    )
-    assert ingest_polygon_day(store, client, day2).status == "ok"
+    res = ingest_polygon_day(store, client, D)
+    assert res.status == "ok" and "jump_unexplained=1" in res.detail
+    fl = _flags(store, D)
+    assert fl.row(0)[:2] == ("MAA", "jump_unexplained") and fl.height == 1
 
 
 @respx.mock
-def test_backfill_resumable(store, client):
+def test_jump_with_consistent_split_is_reconciled(store, client):
+    day1 = date(2026, 10, 15)
+    _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
+    assert ingest_polygon_day(store, client, day1).status == "ok"
+    halved = _payload(lambda r: r.update(c=r["c"] * 0.5) if r["T"] == "MAA" else None)
+    _grouped_route(lambda req: httpx.Response(200, json=halved))
+    store.upsert(
+        "splits",
+        pl.DataFrame({"symbol": ["MAA"], "date": [D], "ratio": [2.0], "source": ["polygon"]}),
+        ["symbol", "date", "source"],
+    )
+    res = ingest_polygon_day(store, client, D)
+    assert res.status == "ok" and "jump_reconciled=1" in res.detail
+    assert _flags(store, D).row(0)[:2] == ("MAA", "jump_split_reconciled")
+
+
+@respx.mock
+def test_breadth_of_jumps_quarantines_but_stores(store, client):
+    day1 = date(2026, 10, 15)
+    _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
+    assert ingest_polygon_day(store, client, day1).status == "ok"
+    hit = set(MEMBERS[:110])  # 110 of 501 members (> 20%)
+    wild = _payload(lambda r: r.update(c=r["c"] * 1.6) if r["T"] in hit else None)
+    _grouped_route(lambda req: httpx.Response(200, json=wild))
+    res = ingest_polygon_day(store, client, D)
+    assert res.status == "quarantined" and "jump_unexplained" in res.detail
+    assert _stored_count(store, D) == res.rows
+    assert _flags(store, D).height == 110
+
+
+@respx.mock
+def test_prior_close_comes_from_a_quarantined_day(store, client):
+    """D2 (AMD-0018): day 1 is quarantined; day 2 must still compare against day 1's close."""
+    day1 = date(2026, 10, 15)
+
+    def day1_mutation(r):
+        if r["T"] in MEMBERS[:20]:
+            r["v"] = 0  # 20 of 501 members at zero volume (> 2%): quarantine
+        if r["T"] == "MAA":
+            r["c"] = r["c"] * 1.5
+
+    _grouped_route(lambda req: httpx.Response(200, json=_payload(day1_mutation)))
+    assert ingest_polygon_day(store, client, day1).status == "quarantined"
+    _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
+    res = ingest_polygon_day(store, client, D)
+    # No cascade: day 1's verdict does not reach day 2 ...
+    assert res.status == "ok", res.detail
+    # ... and the comparison was against day 1's (quarantined) close, not an older one.
+    fl = _flags(store, D)
+    assert fl.row(0)[:2] == ("MAA", "jump_unexplained") and fl.height == 1
+    assert "-0.33" in fl["detail"][0]
+
+
+def _days_called(route):
+    return {c.request.url.path.rsplit("/", 1)[1] for c in route.calls}
+
+
+@respx.mock
+def test_backfill_resumable(store, client, monkeypatch):
+    monkeypatch.setattr("argus.data.providers.polygon.time.sleep", lambda s: None)
     start, end = date(2026, 10, 12), date(2026, 10, 18)  # Mon..Sun
-    state = {"rejected_day": "2026-10-14"}
+    state = {"failing": "2026-10-16"}
 
     def handler(req):
         d = req.url.path.rsplit("/", 1)[1]
         if d == "2026-10-12":
             return httpx.Response(200, json={"status": "OK", "resultsCount": 0})
-        if d == state["rejected_day"]:
-            return httpx.Response(200, json=_truncated(100))
+        if d == state["failing"]:
+            return httpx.Response(500)
+        if d == "2026-10-14":
+            return httpx.Response(200, json=_truncated(100))  # quarantined (coverage)
         return httpx.Response(200, json=GROUPED)
 
     route = _grouped_route(handler)
     first = backfill_polygon(store, client, start, end)
-    assert route.call_count == 5  # weekdays only
-    assert sorted(r.status for r in first) == ["holiday", "ok", "ok", "ok", "rejected"]
+    assert _days_called(route) == {f"2026-10-{n}" for n in (12, 13, 14, 15, 16)}  # weekdays only
+    assert sorted(r.status for r in first) == ["failed", "holiday", "ok", "ok", "quarantined"]
     log = store.read("SELECT date, status FROM ingest_log ORDER BY date")
     assert log.height == 5 and all(d.weekday() < 5 for d in log["date"])
+    assert _stored_count(store, date(2026, 10, 14)) > 0  # the quarantined day is stored
 
     route.reset()
     second = backfill_polygon(store, client, start, end)
-    assert route.call_count == 1  # only the rejected day is retried
-    assert route.calls[0].request.url.path.endswith("2026-10-14")
-    assert [r.status for r in second] == ["rejected"]
+    # ok/holiday/quarantined are skipped; only 'failed' is retried (the client retries 5xx itself)
+    assert _days_called(route) == {"2026-10-16"}
+    assert [r.status for r in second] == ["failed"]
 
-    state["rejected_day"] = "none"
+    state["failing"] = "none"
     route.reset()
     third = backfill_polygon(store, client, start, end)
-    assert [r.status for r in third] == ["ok"] and route.call_count == 1
+    assert [r.status for r in third] == ["ok"] and _days_called(route) == {"2026-10-16"}
+    assert route.call_count == 1
 
     route.reset()
     assert backfill_polygon(store, client, start, end) == []
     assert route.call_count == 0
+
+
+def _bars_raw_digest(store):
+    h = hashlib.sha256()
+    for f in sorted((store.parquet_dir / "bars_raw").rglob("*.parquet")):
+        h.update(f.relative_to(store.parquet_dir).as_posix().encode())
+        h.update(f.read_bytes())
+    return h.hexdigest()
+
+
+@respx.mock
+def test_revalidate_makes_no_provider_call(store, client):
+    day1 = date(2026, 10, 15)
+    route = _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
+    assert ingest_polygon_day(store, client, day1).status == "ok"
+    jumped = _payload(lambda r: r.update(c=r["c"] * 1.5) if r["T"] == "MAA" else None)
+    _grouped_route(lambda req: httpx.Response(200, json=jumped))
+    assert ingest_polygon_day(store, client, D).status == "ok"
+    assert _flags(store, D).row(0)[:2] == ("MAA", "jump_unexplained")
+
+    # Knowledge changes after the fetch: a split on D consistent with the move, and a current
+    # member loses its classification (a day-level fault).
+    store.upsert(
+        "splits",
+        pl.DataFrame({"symbol": ["MAA"], "date": [D], "ratio": [2 / 3], "source": ["polygon"]}),
+        ["symbol", "date", "source"],
+    )
+    store.upsert(
+        "symbols",
+        pl.DataFrame({"symbol": ["MAB"], "gics_industry_group": [None], "active": [True]}),
+        ["symbol"],
+    )
+    digest, rows = _bars_raw_digest(store), store.read("SELECT * FROM bars_raw ORDER BY ALL")
+    route.reset()
+    results = revalidate_range(store, day1, D)
+
+    assert route.call_count == 0  # no HTTP at all
+    assert [r.status for r in results] == ["quarantined", "quarantined"]
+    assert _last_status(store, D) == "quarantined" and _last_status(store, day1) == "quarantined"
+    fl = _flags(store, D)  # the old unexplained row is replaced, not accumulated
+    assert fl.height == 1 and fl.row(0)[:2] == ("MAA", "jump_split_reconciled")
+    assert _bars_raw_digest(store) == digest  # bars_raw byte-identical
+    assert store.read("SELECT * FROM bars_raw ORDER BY ALL").equals(rows)
+
+
+@respx.mock
+def test_cli_revalidate_needs_no_key_and_no_network(clean_env, store, client):
+    _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
+    assert ingest_polygon_day(store, client, D).status == "ok"
+    clean_env.setenv("ARGUS_STORE_DIR", str(store.store_dir))  # no POLYGON_API_KEY
+    route = _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
+    route.reset()
+    res = CliRunner().invoke(
+        app, ["ingest", "revalidate", "--start", "2026-10-01", "--end", "2026-10-31"]
+    )
+    assert res.exit_code == 0, res.output
+    assert "days=1" in res.output and "ok=1" in res.output
+    assert route.call_count == 0
+    bad = CliRunner().invoke(
+        app, ["ingest", "revalidate", "--start", "2026-10-31", "--end", "2026-10-01"]
+    )
+    assert bad.exit_code == 2
 
 
 @respx.mock

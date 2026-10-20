@@ -21,7 +21,7 @@ log = structlog.get_logger()
 @dataclass(frozen=True)
 class IngestResult:
     rows: int
-    status: Literal["ok", "rejected", "failed", "holiday"]
+    status: Literal["ok", "quarantined", "holiday", "failed"]
     detail: str = ""
 
 
@@ -38,6 +38,12 @@ def _finish(store: Store, d: date, result: IngestResult) -> IngestResult:
 
 
 def _prior_close(store: Store, d: date) -> pl.DataFrame:
+    """Each symbol's latest stored close before `d`, whatever verdict that day received.
+
+    Reads bars_raw, which holds every fetched row (CI-9), so no verdict can reach the next
+    day's comparison (AMD-0018 2A, D2). A symbol absent on the previous day falls back to its
+    last stored close inside the window, so a thin day does not blind the day after it.
+    """
     return store.read(
         "SELECT symbol, close FROM bars_raw WHERE source = ? AND date < ? AND date >= ? "
         "QUALIFY row_number() OVER (PARTITION BY symbol ORDER BY date DESC) = 1",
@@ -45,7 +51,82 @@ def _prior_close(store: Store, d: date) -> pl.DataFrame:
     )
 
 
+def _is_first_date(store: Store, d: date) -> bool:
+    """True only when bars_raw holds no earlier row for this source (AMD-0017 2B)."""
+    n = store.read(
+        "SELECT count(*) AS n FROM bars_raw WHERE source = ? AND date < ?", [SOURCE, d]
+    )["n"][0]
+    return n == 0
+
+
+def _write_flags(store: Store, d: date, flags: pl.DataFrame) -> None:
+    """Replace this day's bar_flags (a re-judgement supersedes the previous one), atomically."""
+    con = store.connect()
+    try:
+        con.execute("BEGIN")
+        try:
+            con.execute("DELETE FROM bar_flags WHERE date = ? AND source = ?", [d, SOURCE])
+            if not flags.is_empty():
+                df = flags.with_columns(pl.lit(d).alias("date"), pl.lit(SOURCE).alias("source"))
+                df = df.select("symbol", "date", "source", "flag", "detail")
+                con.register("incoming_flags", df.to_arrow())
+                try:
+                    con.execute(
+                        "INSERT INTO bar_flags SELECT symbol, date, source, flag, detail "
+                        "FROM incoming_flags"
+                    )
+                finally:
+                    con.unregister("incoming_flags")
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+    finally:
+        con.close()
+
+
+def _judge(store: Store, d: date, bars: pl.DataFrame, extra: str = "") -> IngestResult:
+    """Run validate_day over `bars` (already stored), record flags and the ingest_log verdict."""
+    sym = store.read("SELECT symbol, gics_industry_group FROM symbols")
+    members = store.members_on(d)
+    splits_today = dict(
+        store.read(
+            "SELECT symbol, ratio FROM splits WHERE date = ? AND ratio <> 1 ORDER BY source",
+            [d],
+        ).iter_rows()
+    )
+    # "Current" = has an open membership interval (end_date IS NULL); only these must be
+    # classified (AMD-0016 2C). Historical-only members are counted, never quarantining.
+    open_symbols = set(
+        store.read("SELECT DISTINCT symbol FROM membership WHERE end_date IS NULL")[
+            "symbol"
+        ].to_list()
+    )
+    result = validate_day(
+        bars,
+        members,
+        _prior_close(store, d),
+        splits_today,
+        sym,
+        _is_first_date(store, d),
+        current_members=open_symbols,
+    )
+    _write_flags(store, d, result.flags)
+    summary = (
+        f"members={len(members)} coverage={result.coverage:.4f}{extra} "
+        f"unclassified={result.n_unclassified_members} "
+        f"jump_unexplained={result.n_jump_unexplained} "
+        f"jump_reconciled={result.n_jump_reconciled} flags={result.flags.height} "
+        f"jump_rule_applied={result.jump_rule_applied}"
+    )
+    if result.ok:
+        return _finish(store, d, IngestResult(bars.height, "ok", summary))
+    detail = "; ".join(result.reasons) + " | " + summary
+    return _finish(store, d, IngestResult(bars.height, "quarantined", detail))
+
+
 def ingest_polygon_day(store: Store, client: PolygonClient, d: date) -> IngestResult:
+    """Fetch one day, store EVERY fetched row, then judge it (CI-9, AMD-0018 2A)."""
     try:
         raw = client.grouped_daily(d)
     except ProviderError as exc:
@@ -55,43 +136,15 @@ def ingest_polygon_day(store: Store, client: PolygonClient, d: date) -> IngestRe
     if raw.is_empty():
         return _finish(store, d, IngestResult(0, "holiday", "empty grouped-daily response"))
     try:
-        sym = store.read("SELECT symbol, gics_industry_group FROM symbols")
-        bars = raw.filter(pl.col("symbol").is_in(sym["symbol"].to_list()))
-        members = store.members_on(d)
-        splits_today = set(
-            store.read(
-                "SELECT symbol FROM splits WHERE date = ? AND ratio <> 1",
-                [d],
-            )["symbol"].to_list()
-        )
-        # "Current" = has an open membership interval (end_date IS NULL); only these must be
-        # classified (AMD-0016 2C). Historical-only members are counted, never rejecting.
-        open_symbols = set(
-            store.read("SELECT DISTINCT symbol FROM membership WHERE end_date IS NULL")[
-                "symbol"
-            ].to_list()
-        )
-        result = validate_day(
-            bars,
-            members,
-            _prior_close(store, d),
-            splits_today,
-            sym,
-            current_members=open_symbols,
-        )
-        if not result.ok:
-            return _finish(store, d, IngestResult(0, "rejected", "; ".join(result.reasons)))
-        written = store.write_bars_raw(
+        known = store.read("SELECT symbol FROM symbols")["symbol"].to_list()
+        bars = raw.filter(pl.col("symbol").is_in(known))
+        # Stored BEFORE validation: no verdict may prevent a fetched row being stored.
+        store.write_bars_raw(
             bars.select("symbol", "date", "open", "high", "low", "close", "volume").with_columns(
                 pl.lit(client.source).alias("source"), pl.lit(client.basis).alias("basis")
             )
         )
-        detail = (
-            f"members={len(members)} coverage={result.coverage:.4f} "
-            f"dropped_tickers={client.last_dropped} "
-            f"unclassified={result.n_unclassified_members}"
-        )
-        return _finish(store, d, IngestResult(written, "ok", detail))
+        return _judge(store, d, bars, extra=f" dropped_tickers={client.last_dropped}")
     except Exception as exc:  # noqa: BLE001 - recorded as failed in ingest_log
         return _finish(store, d, IngestResult(0, "failed", f"{type(exc).__name__}: {exc}"))
 
@@ -99,10 +152,16 @@ def ingest_polygon_day(store: Store, client: PolygonClient, d: date) -> IngestRe
 def backfill_polygon(
     store: Store, client: PolygonClient, start: date, end: date
 ) -> list[IngestResult]:
-    """Ingest every weekday in [start, end] not already ok/holiday in ingest_log."""
+    """Ingest every weekday in [start, end] not already ok/holiday/quarantined in ingest_log.
+
+    A quarantined day is already stored and re-fetching cannot change its verdict; re-judging
+    is revalidate_range's job (AMD-0018 2E).
+    """
     done = set(
         store.read(
-            "SELECT DISTINCT date FROM ingest_log WHERE source = ? AND status IN ('ok', 'holiday')",
+            "SELECT date FROM ingest_log WHERE source = ? "
+            "QUALIFY row_number() OVER (PARTITION BY date ORDER BY finished_at DESC) = 1 "
+            "AND status IN ('ok', 'holiday', 'quarantined')",
             [SOURCE],
         )["date"].to_list()
     )
@@ -112,6 +171,32 @@ def backfill_polygon(
         if d.weekday() < 5 and d not in done:
             results.append(ingest_polygon_day(store, client, d))
         d += timedelta(days=1)
+    return results
+
+
+def revalidate_range(store: Store, start: date, end: date) -> list[IngestResult]:
+    """Re-judge every stored day in [start, end]: no provider call, bars_raw never written.
+
+    Rewrites ingest_log and bar_flags only (AMD-0018 2D).
+    """
+    dates = store.read(
+        "SELECT DISTINCT date FROM bars_raw WHERE source = ? AND date >= ? AND date <= ? "
+        "ORDER BY date",
+        [SOURCE, start, end],
+    )["date"].to_list()
+    results: list[IngestResult] = []
+    for d in dates:
+        try:
+            bars = store.read(
+                "SELECT symbol, close, volume FROM bars_raw WHERE source = ? AND date = ?",
+                [SOURCE, d],
+            )
+            results.append(_judge(store, d, bars))
+        except Exception as exc:  # noqa: BLE001 - recorded as failed in ingest_log
+            # Not written to ingest_log: the day IS stored, and a 'failed' row would make the
+            # backfill re-fetch it. The caller sees the failure in the returned results.
+            log.error("revalidate_failed", date=d.isoformat(), error=type(exc).__name__)
+            results.append(IngestResult(0, "failed", f"{type(exc).__name__}: {exc}"))
     return results
 
 
