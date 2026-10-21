@@ -75,6 +75,15 @@ here — CI-7 and AMD-0001 permit only `dell-debian` in this repository).
 The gateway found listening on the **live** port on `dell-debian` is
 therefore a stray that should not be running there.
 
+> **RETRACTED AS TO FACT — see AMD-0026 §2A.** There was never a stray
+> IBKR live gateway on `dell-debian`. `dell-debian` runs `ib-gateway`
+> **paper-only on 4002**; **4001 is a LiteLLM container** — the Product
+> Owner's local model gateway, the path ADR-0004 depends on — and **must
+> not be touched**. I identified a service by its port number and recorded
+> the inference as fact. The topology statement (paper here, live
+> elsewhere) and every barrier below stand; only the "stray to be removed"
+> claim is withdrawn.
+
 The live checks ran against `dell-debian`'s paper-port gateway, which is
 the correct target under that topology, so WO-0008's evidence stands and
 needs no re-run. But it means the only thing that stood between the
@@ -156,9 +165,9 @@ WO-0013's `dividend-basis.md` is the standard.
 topology is why: with the live gateway on another host, a loopback default
 plus the paper-port allowlist plus the account assertion means the
 application on `dell-debian` can reach nothing but `dell-debian`'s paper
-gateway. Three independent barriers, two of which only exist if the stray
-local live-port gateway is removed. I had intended to withdraw R3 and that
-would have been wrong — it is the default that makes the live host
+gateway. Three independent barriers — all of which hold **as delivered**,
+with nothing to remove first (corrected, AMD-0026 §2A). I had intended to
+withdraw R3 and that would have been wrong — it is the default that makes the live host
 unreachable.
 
 ### F. A coverage field reports or is absent; it is never a constant

@@ -618,12 +618,16 @@ stop 1.5·ATR14 (long) / 2·ATR14 (short); position cap 10% of equity; max
 - `IB_PORT` must be a paper port (AMD-0019 §3). A non-paper port makes the
   reconcile step report a configuration error; since the step is
   `required=False`, the night continues rather than failing.
-- **Gateway topology** (AMD-0021 §2E): the **paper** gateway runs on
-  `dell-debian`; any live gateway runs on another host and is never
-  reachable from this application's configuration. The **absence** of a
-  live gateway on the nightly host is verified at install (WO-0009 AC10a,
-  AMD-0022 §2C), not assumed: two of the three barriers below hold only
-  while that is true. A gateway listening on
+- **Gateway topology** (AMD-0021 §2E, corrected AMD-0026 §2A): the
+  **paper** gateway runs on `dell-debian`; any live gateway runs on another
+  host and is never reachable from this application's configuration. The
+  absence of a live **IBKR gateway process** on the nightly host is
+  verified at install (WO-0009 AC10a), not assumed — and the check
+  identifies the **listening process**, never merely a bound port. IBKR's
+  live port numbers are conventions, and on this host another service
+  legitimately occupies one; a non-IBKR service on an IBKR-numbered port is
+  a pass and is none of this project's business. All three barriers below
+  hold as delivered, with nothing to remove first. A gateway listening on
   a live port on `dell-debian` is a misconfiguration to be removed, not
   something to be defended against by port number alone.
 - **The paper account is asserted on connect, not inferred from the

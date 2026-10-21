@@ -38,14 +38,17 @@ argus/diagnostics/dividends.py    create  same_date_dividend_report(store, clien
 argus/diagnostics/renames.py      create  undeclared_rename_candidates(store) -> pl.DataFrame
                                             [old_symbol, old_end_date, new_symbol, new_start_date, gap_trading_days,
                                              new_symbol_first_bar, bars_before_new_start, price_ratio_at_boundary, confidence]
-                                          Signals, all from stored data, none decisive alone:
-                                            (1) a current member whose membership start is materially later than its
-                                                FIRST STORED BAR — the decisive one: both free sources serve a renamed
-                                                company's whole history under the NEW ticker (AMD-0016 §2D), so bars
-                                                predating the membership interval indicate the interval begins at a
-                                                rename, not at the company's listing
-                                            (2) another symbol's interval ending within `--gap-days` (default 10) of it
-                                            (3) the two symbols' closes at the boundary within 10% of each other
+                                                                                    Signals from stored data (corrected, AMD-0026 §2C):
+                                            (2) NECESSARY — another symbol's membership interval ending within
+                                                `--gap-days` (default 10) of this one's start. No candidate without it
+                                            (1) CORROBORATING — a current member whose membership start is materially
+                                                later than its first stored bar. NOT decisive: it is true of nearly every
+                                                index addition, because companies list years before they join and the
+                                                bootstrap pulls 10+ years for every symbol in `membership`. A genuine
+                                                addition and a rename have the SAME shape under this signal, so no
+                                                threshold separates them; only the pairing in (2) does
+                                            (3) CORROBORATING — the two symbols' closes at the boundary within 10% of
+                                                each other
                                           Output is RANKED CANDIDATES FOR OPERATOR REVIEW. It must not edit
                                           `config/ticker_renames.yaml`, must not write `membership`, and must not
                                           merge any interval (AMD-0025 §2C)
@@ -87,10 +90,10 @@ not a measurement (the WO-0013 `dividend-basis.md` standard).
 ## 6. Acceptance criteria
 - **AC1** — `docs/evidence/WO-0015/dividend-mechanism.md` states, **with the verbatim raw Polygon payload for at least PGR 2026-01-02 and FCX on one quarterly ex-date**, how many records the API returns per `(symbol, ex_date)`, their amounts and type fields, and whether the stored amount equals one record, their sum, or neither. It ends with a plain statement: the collapse hypothesis is **confirmed** or **refuted**, and on what evidence.
 - **AC2** — The same report lists every `(symbol, ex_date)` in the store where Polygon and yfinance disagree by more than 2× after basis normalisation, with both amounts and the resulting `adj_close` error as a percentage of price on that date. The population is stated, not a sample.
-- **AC3** — `docs/evidence/WO-0015/rename-candidates.md` ranks undeclared rename candidates with all three signals per row, and states for each whether it is a probable rename, a probable reassignment, or not discriminable. **FB/META is present and explicitly adjudicated.**
+- **AC3** — `docs/evidence/WO-0015/rename-candidates.md` ranks undeclared rename candidates with all three signals per row, and states for each whether it is a probable rename, a probable reassignment, or not discriminable. **FB/META is present and explicitly adjudicated.** The report also states **the count of current members for which signal (1) alone is true**, to show on real data why it is not decisive (AMD-0026 §2C) — the Architect's error, measured rather than asserted.
 - **AC4** — The same report states whether any **current** member's membership interval begins materially after its first stored bar — the CI-2 severance case — and names every one.
 - **AC5** — Nothing was written: every table's row count and a `bars_raw` checksum are identical before and after both commands, `config/ticker_renames.yaml` is byte-identical, and `git status` on the host clone is clean (operator check, all figures filed).
-- **AC6** — Non-vacuity, mandatory (CI-6): file two mutation runs — (a) treating a multi-record payload as a single record makes `test_raw_payload_record_count_is_reported` fail; (b) accepting signal (1) alone as sufficient makes `test_genuine_new_listing_is_not_a_candidate` fail.
+- **AC6** — Non-vacuity, mandatory (CI-6): file two mutation runs — (a) treating a multi-record payload as a single record makes `test_raw_payload_record_count_is_reported` fail; (b) **(replaced, AMD-0026 §2C)** treating **signal (1) as sufficient** — dropping the signal (2) requirement — makes `test_long_prior_history_addition_is_not_a_candidate` fail, whose fixture is a **genuine index addition with ten years of prior bars and no adjacent interval ending**: the real false-positive class. The previous AC6(b) pointed at an IPO fixture whose first bar and membership start share a date, so it failed signal (1) too and **the mutation could not fail** — a vacuous non-vacuity requirement, and the Architect's defect, not the delivery's. `test_genuine_new_listing_is_not_a_candidate` is retained as a case, not as the mutation target.
 
 ## 7. Evidence the Delivery Controller must file
 `tests.md`, `auditor-prompt.md`, `audit.md`, `acceptance.md`,

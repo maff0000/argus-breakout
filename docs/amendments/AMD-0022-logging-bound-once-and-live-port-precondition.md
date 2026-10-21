@@ -5,7 +5,7 @@
 | **Status** | Approved |
 | **Amends** | `docs/work-orders/WO-0009-nightly-orchestration.md` §4, §6 (delta); `docs/architecture/DESIGN.md` §10 |
 | **Related ADR** | ADR-0008 (constraint 6) |
-| **Raised by** | Delivery Controller, 2026-10-21: integrating WO-0013 with the merged WO-0008 failed two `tests/test_store.py` tests because `configure_logging()` left structlog bound to a stdout pytest had closed. Fixed test-side by an autouse `structlog.reset_defaults()` fixture, proved two ways. Plus the Product Owner's removal of the stray live-port gateway on `dell-debian` |
+| **Raised by** | Delivery Controller, 2026-10-21: integrating WO-0013 with the merged WO-0008 failed two `tests/test_store.py` tests because `configure_logging()` left structlog bound to a stdout pytest had closed. Fixed test-side by an autouse `structlog.reset_defaults()` fixture, proved two ways. Plus a precondition check on the host's gateways — whose premise (a stray live-port gateway) was **false and is retracted in AMD-0026 §2A** |
 | **Affects Work Orders** | WO-0009 (delta), WO-0013 (accepted @ `affa975`, no change) |
 
 ## 1. Problem
@@ -34,10 +34,17 @@ cannot report its own absence.
 
 ### (b) The nightly could install onto a host serving a live gateway
 AMD-0021 §2E states the intended topology and names three barriers —
-loopback default, port allowlist, paper-account assertion — but two of
-them only hold once the stray live-port gateway on `dell-debian` is gone.
-Nothing measured whether it was. An intention recorded in a design
-document is not a control.
+loopback default, port allowlist, paper-account assertion. Nothing
+measured whether the host matched that topology, and **an intention
+recorded in a design document is not a control**: that argument stands and
+is why AC10a exists.
+
+> **CORRECTED — AMD-0026 §2A.** The premise that a stray live-port gateway
+> existed on `dell-debian` was **false**: 4001 is a LiteLLM container and
+> `ib-gateway` is paper-only on 4002. All three barriers hold as
+> delivered. AC10a survives the correction but must identify the
+> **listening process**, not merely a bound port — an IBKR-numbered port
+> occupied by another service is a **pass** (AMD-0026 §2B).
 
 ## 2. Change
 
@@ -54,10 +61,13 @@ logging against a stale stdout object, or redirecting stdout after
 configuration, must make it fail.
 
 ### C. No live gateway on the nightly host
-`WO-0009` **AC10a**, a precondition checked at install: nothing on the host
-is listening on an IBKR live port, recorded pass/fail with **no port or
-host values filed** (CI-7). **A fail is a stop** — the nightly does not
-install onto a host that is also serving a live gateway.
+`WO-0009` **AC10a**, a precondition checked at install: **no IB Gateway or
+TWS process** on the host is serving a live-trading port. The check
+identifies the **listening process or container**, not merely that a port
+is bound (reworded by AMD-0026 §2B — IBKR's live ports are conventions,
+and on this host another service already occupies one). Recorded pass/fail
+with **no port, host or container values filed** (CI-7). **A fail is a
+stop.** A non-IBKR service on an IBKR-numbered port is a **pass**.
 
 `DESIGN.md` §10's topology bullet gains: the absence of a live gateway on
 the nightly host is **verified at install (WO-0009 AC10a)**, not assumed.
