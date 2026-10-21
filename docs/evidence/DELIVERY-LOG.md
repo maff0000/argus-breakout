@@ -99,3 +99,5 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-21T14:40Z  WO-0014  PR Open  awaiting ARCHITECT ACCEPTANCE (outside the AMD-0010 mandate)
 2026-10-21T15:25Z  WO-0014  Accepted  explicit Architect acceptance, https://github.com/maff0000/argus-breakout/pull/13#issuecomment-6319530439
 2026-10-21T15:25Z  WO-0014  Closed  merged via PR #13
+2026-10-21T16:59Z  WO-0015  Accepted  explicit Architect acceptance, https://github.com/maff0000/argus-breakout/pull/14#issuecomment-6321535448
+2026-10-21T16:59Z  WO-0015  Closed  merged via PR #14
