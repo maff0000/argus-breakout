@@ -84,3 +84,5 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-21T09:34Z  WO-0013  Audited GREEN  audited sha df4b52d; no findings; evidence docs/evidence/WO-0013/
 2026-10-21T09:34Z  WO-0013  Operator checks  copy of scratch store, no network: AC1-AC5, AC7 met; see operator-checks.md
 2026-10-21T09:34Z  WO-0013  PR Open  awaiting ARCHITECT ACCEPTANCE (outside the AMD-0010 mandate)
+2026-10-21T09:47Z  WO-0013  Accepted  explicit Architect acceptance, https://github.com/maff0000/argus-breakout/pull/12#issuecomment-6312849284
+2026-10-21T09:47Z  WO-0013  Closed  merged via PR #12
