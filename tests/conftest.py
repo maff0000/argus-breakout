@@ -1,6 +1,7 @@
 import os
 
 import pytest
+import structlog
 
 from argus.settings import Settings, get_settings
 
@@ -16,3 +17,10 @@ def clean_env(monkeypatch):
     get_settings.cache_clear()
     yield monkeypatch
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_structlog():
+    yield
+    # configure_logging() binds a closed test stdout; reset so later tests can log.
+    structlog.reset_defaults()
