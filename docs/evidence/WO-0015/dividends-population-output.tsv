@@ -1,0 +1,28 @@
+rows=26
+symbol	date	source	n_rows_stored	stored_amount	note
+CME	2026-03-10	polygon	1	1.3	normalised polygon=1.3 yfinance=7.45 ratio=5.731x prior_close=319.0900 adj_close_err_pct=1.927 suspect=True
+CME	2026-03-10	yfinance	1	7.45	normalised polygon=1.3 yfinance=7.45 ratio=5.731x prior_close=319.0900 adj_close_err_pct=1.927 suspect=True
+COP	2024-08-12	polygon	1	0.2	normalised polygon=0.2 yfinance=0.78 ratio=3.9x prior_close=108.6100 adj_close_err_pct=0.534 suspect=True
+COP	2024-08-12	yfinance	1	0.78	normalised polygon=0.2 yfinance=0.78 ratio=3.9x prior_close=108.6100 adj_close_err_pct=0.534 suspect=True
+DVN	2024-06-14	polygon	1	0.13	normalised polygon=0.13 yfinance=0.35 ratio=2.692x prior_close=45.7600 adj_close_err_pct=0.481 suspect=True
+DVN	2024-06-14	yfinance	1	0.35	normalised polygon=0.13 yfinance=0.35 ratio=2.692x prior_close=45.7600 adj_close_err_pct=0.481 suspect=True
+EXE	2024-05-15	polygon	1	0.14	normalised polygon=0.14 yfinance=0.715 ratio=5.107x prior_close=90.8100 adj_close_err_pct=0.633 suspect=True
+EXE	2024-05-15	yfinance	1	0.715	normalised polygon=0.14 yfinance=0.715 ratio=5.107x prior_close=90.8100 adj_close_err_pct=0.633 suspect=True
+FANG	2024-05-14	polygon	1	0.9	normalised polygon=0.9 yfinance=1.97 ratio=2.189x prior_close=200.7700 adj_close_err_pct=0.533 suspect=True
+FANG	2024-05-14	yfinance	1	1.97	normalised polygon=0.9 yfinance=1.97 ratio=2.189x prior_close=200.7700 adj_close_err_pct=0.533 suspect=True
+FANG	2024-08-15	polygon	1	0.9	normalised polygon=0.9 yfinance=2.34 ratio=2.6x prior_close=196.4500 adj_close_err_pct=0.733 suspect=True
+FANG	2024-08-15	yfinance	1	2.34	normalised polygon=0.9 yfinance=2.34 ratio=2.6x prior_close=196.4500 adj_close_err_pct=0.733 suspect=True
+HP	2024-02-12	polygon	1	0.17	normalised polygon=0.17 yfinance=0.42 ratio=2.471x prior_close=38.0600 adj_close_err_pct=0.657 suspect=True
+HP	2024-02-12	yfinance	1	0.42	normalised polygon=0.17 yfinance=0.42 ratio=2.471x prior_close=38.0600 adj_close_err_pct=0.657 suspect=True
+HP	2024-05-16	polygon	1	0.17	normalised polygon=0.17 yfinance=0.42 ratio=2.471x prior_close=38.5000 adj_close_err_pct=0.649 suspect=True
+HP	2024-05-16	yfinance	1	0.42	normalised polygon=0.17 yfinance=0.42 ratio=2.471x prior_close=38.5000 adj_close_err_pct=0.649 suspect=True
+PGR	2025-01-10	polygon	1	0.1	normalised polygon=0.1 yfinance=4.6 ratio=46x prior_close=243.5900 adj_close_err_pct=1.847 suspect=True
+PGR	2025-01-10	yfinance	1	4.6	normalised polygon=0.1 yfinance=4.6 ratio=46x prior_close=243.5900 adj_close_err_pct=1.847 suspect=True
+PGR	2026-01-02	polygon	1	0.1	normalised polygon=0.1 yfinance=13.6 ratio=136x prior_close=227.7200 adj_close_err_pct=5.928 suspect=True
+PGR	2026-01-02	yfinance	1	13.6	normalised polygon=0.1 yfinance=13.6 ratio=136x prior_close=227.7200 adj_close_err_pct=5.928 suspect=True
+WRB	2024-09-23	polygon	1	0.08	normalised polygon=0.08 yfinance=0.33 ratio=4.125x prior_close=57.4500 adj_close_err_pct=0.435 suspect=True
+WRB	2024-09-23	yfinance	1	0.33	normalised polygon=0.08 yfinance=0.33 ratio=4.125x prior_close=57.4500 adj_close_err_pct=0.435 suspect=True
+WRB	2024-12-16	polygon	1	0.08	normalised polygon=0.08 yfinance=0.58 ratio=7.25x prior_close=60.7600 adj_close_err_pct=0.823 suspect=True
+WRB	2024-12-16	yfinance	1	0.58	normalised polygon=0.08 yfinance=0.58 ratio=7.25x prior_close=60.7600 adj_close_err_pct=0.823 suspect=True
+WRB	2025-12-15	polygon	1	0.09	normalised polygon=0.09 yfinance=1.09 ratio=12.11x prior_close=69.3300 adj_close_err_pct=1.442 suspect=True
+WRB	2025-12-15	yfinance	1	1.09	normalised polygon=0.09 yfinance=1.09 ratio=12.11x prior_close=69.3300 adj_close_err_pct=1.442 suspect=True
