@@ -93,3 +93,4 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-21T09:44Z  WO-0008  Accepted  explicit Architect acceptance, https://github.com/maff0000/argus-breakout/pull/11#issuecomment-6312702227
 2026-10-21T09:44Z  WO-0008  Closed  merged via PR #11
 2026-10-21T10:16Z  WO-0013  Integration fix  main merged after WO-0008; test-only structlog reset affa975; delta audit GREEN; re-acceptance requested
+2026-10-21T15:19Z  WO-0013  Re-accepted  Architect acceptance at affa975 (delta audit GREEN), https://github.com/maff0000/argus-breakout/pull/12#issuecomment-6314018095

@@ -4,13 +4,14 @@
 WORK ORDER:        WO-0013
 AMENDMENTS:        AMD-0012, AMD-0018, AMD-0019
 BASE SHA:          df0a126
-AUDITED SHA:       df4b52d1e7365261b0aefb7a47b38374f7dbe379 (code); affa97579600f2a291ad94f9bff3fd20cea748f4 (post-acceptance integration fix, delta audit GREEN: audit-delta.md)
+AUDITED SHA:       df4b52d1e7365261b0aefb7a47b38374f7dbe379 (accepted); affa97579600f2a291ad94f9bff3fd20cea748f4 (test-only integration fix, delta audit GREEN: audit-delta.md) (code); affa97579600f2a291ad94f9bff3fd20cea748f4 (post-acceptance integration fix, delta audit GREEN: audit-delta.md)
 BRANCH HEAD:       fa248c605637c387f1d8e46e08ca0dfffb7abebe (at filing; later commits are evidence/clerical only)
 PR:                #12  https://github.com/maff0000/argus-breakout/pull/12
 AUDIT VERDICT:     GREEN  (docs/evidence/WO-0013/audit.md)
 ACCEPTANCE:        ACCEPTED
 AUTHORITY:         explicit Architect acceptance, PR comments https://github.com/maff0000/argus-breakout/pull/12#issuecomment-6312849284 (@ df4b52d) and https://github.com/maff0000/argus-breakout/pull/12#issuecomment-6314018095 (@ affa975)
-                   (outside the Delegated Acceptance Mandate; filed by the Delivery Controller quoting the comment URL)
+                   and, for the integration fix, https://github.com/maff0000/argus-breakout/pull/12#issuecomment-6314018095
+                   (outside the Delegated Acceptance Mandate; filed by the Delivery Controller quoting the comment URLs)
 DATE (UTC):        2026-10-21
 ARCHITECT:         Claude (Architect)
 ```
