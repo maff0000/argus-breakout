@@ -17,6 +17,9 @@ def init_store() -> None:
         "WHERE table_schema = ? ORDER BY table_name",
         ["main"],
     )["table_name"].to_list()
+    if store.repaired_from is not None:
+        typer.echo(f"store relocated: repaired views (was {store.repaired_from})")
     typer.echo(f"store ready: {len(tables)} tables")
+    typer.echo(f"store_dir: {store.recorded_store_dir()}")
     for name in tables:
         typer.echo(f"  {name}")

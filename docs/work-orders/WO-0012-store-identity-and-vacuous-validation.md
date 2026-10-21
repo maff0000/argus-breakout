@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Approved |
+| **Status** | In Progress |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` §8.5 ; `DESIGN.md` §3.2, §3.3 ; ADR-0008 |
 | **Applicable Amendments** | AMD-0017, AMD-0018 |
-| **Base SHA** | main at Closure of WO-0004 (by reference, DELIVERY-CHAIN §6.3) |
+| **Base SHA** | 4321d92eeea6546a8095ecda3f22e5065837cae4 |
 | **Branch** | `wo/0012-store-identity-and-vacuous-validation` |
 | **Depends on** | WO-0004 — a real dependency now: `bar_flags` takes `SCHEMA_VERSION = 3` in the WO-0004 delta and `store_meta` takes **4** here (AMD-0018 §2G) |
 | **Parallel group** | P0-D2 — may run concurrently with WO-0006 and WO-0007 |

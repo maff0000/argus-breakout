@@ -10,7 +10,8 @@ from argus.data.store import Store
 DESIGN_TABLES = [
     "symbols", "membership", "bars_raw", "splits", "dividends", "bars", "etf_bars", "iv_daily",
     "composites", "features", "market_daily", "sector_daily", "events", "ranks",
-    "evidence_packs", "briefs", "reconcile_log", "ingest_log", "bar_flags", "schema_version",
+    "evidence_packs", "briefs", "reconcile_log", "ingest_log", "bar_flags", "store_meta",
+    "schema_version",
 ]
 
 
@@ -24,7 +25,7 @@ def _tables(store):
 def test_all_design_tables_present(tmp_path):
     store = Store(tmp_path / "store")
     store.init_schema()
-    assert len(DESIGN_TABLES) == 20
+    assert len(DESIGN_TABLES) == 21
     assert set(DDL) == set(DESIGN_TABLES)
     assert _tables(store) == set(DESIGN_TABLES)
     assert (tmp_path / "store" / "argus.duckdb").is_file()
@@ -85,10 +86,10 @@ def test_actions_measures_not_null(tmp_path):
         con.close()
 
 
-def test_schema_version_is_3(tmp_path):
+def test_schema_version_is_4(tmp_path):
     store = Store(tmp_path / "store")
     store.init_schema()
     store.init_schema()
-    assert SCHEMA_VERSION == 3
+    assert SCHEMA_VERSION == 4
     sv = store.read("SELECT version FROM schema_version")
-    assert sv["version"].to_list() == [3]
+    assert sv["version"].to_list() == [4]
