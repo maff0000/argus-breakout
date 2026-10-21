@@ -89,6 +89,14 @@ WO-0013 `dividend-basis.md` standard, AMD-0021 §2A).
 - IBKR history pacing is budget-bound at 46 of 50 requests per 10 minutes
   (AMD-0020 §2D): growing the reconciliation sample or the ETF list is an
   architectural decision, not a parameter change.
+- **`adj_close` is suspect on variable/special-dividend ex-dates** until
+  WO-0015 reports (AMD-0025 §2D). The named dates (PGR, FCX, WRB, CME,
+  DVN, FANG, COP, EXE, F, HP, HST) are known-suspect inputs, and any
+  feature study crossing them must say so — the limitation travels with
+  the number, CI-8-style.
+- **Former members' history is not bootstrapped**, so 10 symbols' post-exit
+  tails cannot be told from a reassignment (WO-0014 spec-gap 1). An
+  ingestion decision, belonging with the R5 survivorship work.
 - Recording a store-relocation repair in `store_meta` as a provenance
   event, rather than only a WARNING line (R7) — belongs to
   PID-ARGUS-0006, where relocation becomes routine.
