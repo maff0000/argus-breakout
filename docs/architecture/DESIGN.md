@@ -412,6 +412,29 @@ universe and within sector (`<feature>_pct`, `<feature>_pct_sector`).
 | Risk | `dd126`, `ulcer63`, `sharpe63` | max drawdown; Ulcer index; rolling Sharpe (rf=0) |
 | Events | `days_to_earnings`, `days_since_earnings`, `pead_gap` | from `events`; gap % on earnings day |
 | Liquidity | `adv20_usd` | 20d mean of close·volume |
+| Candle geometry (AMD-0023) | `body_pct` | abs(close − open) / (high − low); NULL where high = low |
+| | `upper_wick_pct`, `lower_wick_pct` | (high − max(open,close))/(high − low); (min(open,close) − low)/(high − low) |
+| | `marubozu` | sign(close − open) where `body_pct` ≥ 0.90, else 0 |
+| | `doji` | 1 where `body_pct` ≤ 0.10, else 0 |
+| | `range_atr` | (high − low) / atr14 — today's candle in the stock's own volatility |
+| Levels (AMD-0023) | `pivot_d r1_d s1_d r2_d s2_d` | from the prior session's H/L/C: P=(H+L+C)/3, R1=2P−L, S1=2P−H, R2=P+(H−L), S2=P−(H−L). `_w`/`_m` variants from the prior week/month |
+| | `dist_pivot_atr`, `dist_r1_atr`, `dist_s1_atr` | (close − level) / atr14 |
+| | `swing_hi`, `swing_lo` | fractal pivot: a bar whose high (low) is the extreme of the 5 bars either side |
+| | `dist_res_atr`, `dist_sup_atr` | distance to the nearest clustered swing level above/below, in ATR; levels within 0.5·ATR are one level |
+| | `res_touches`, `sup_touches` | touch count of that level — a level tested four times is not the same object as one tested once |
+
+**Level and candle distances are in ATR, never per cent** (AMD-0023 §2D):
+"2% from resistance" means something different for a 12%-volatility
+utility and a 70%-volatility biotech, and ATR units are what make the
+figure comparable across the universe, which the percentile system above
+depends on.
+
+**Candle features are confirmation terms, never triggers** (AMD-0023 §2D).
+A single daily candle pattern is weak evidence alone; its value is a
+marubozu **on a breakout day**, or a doji or long lower wick **at a tested
+support level**. PID-ARGUS-0004's factor-IC study decides whether each one
+carries information; one that does not stays a displayed field and leaves
+the scoring.
 
 ## 6. Market and sector layer — the rotation detector
 
@@ -499,10 +522,57 @@ sector-neutral variants:
 | Pullback buys | ma_stack=1, dist20_atr ∈ [−2,−0.5], rsi14 ∈ [38,55], updown_vol20 ≥ 0.9 | bull_*, correction |
 | Breakout watch | squeeze, bb_width_pct252 < 20, pct_from_hi252 > −5%, rvol falling | all |
 | Bounce | ma_stack ≥ 0, rsi2 < 10, z20 < −2, close > sma200 | correction |
-| Breakdown / short-avoid | ma_stack=−1, rs_rank < 30, dist_days25 ≥ 4, Donchian-20 low break | EXIT_WARNING groups; shorts only in bull_narrow/correction/bear |
+| **Weakness — short / trim / avoid** | ma_stack=−1, rs_rank < 30, dist_days25 ≥ 4, Donchian-20 low break; `marubozu = −1` on the break as confirmation | **Always runs, every regime** (AMD-0023 §2C). The regime sets the actionability column only: `shortable` in bull_narrow/correction/bear, `trim/avoid only` in bull_broad/neutral |
 
 Hard filters: `adv20_usd ≥ 20,000,000`; `days_to_earnings` shown and
-highlighted if ≤ 10; members of EXIT_WARNING groups excluded from long lists.
+highlighted if ≤ 10.
+
+**Rotation tags; it never removes** (AMD-0023 §2A). The earlier filter —
+*"members of EXIT_WARNING groups excluded from long lists"* — is
+**deleted**. Rotation is information about a **group**; it is not a verdict
+on a **company**, and using it as a gate was the fourth instance in this
+project of a judgement being used to delete data (AMD-0018 §2A,
+AMD-0019 §2A, AMD-0021 §2C). Instead:
+
+- Every candidate carries its group's `quadrant`, `rotation_score` and
+  `ENTRY_WATCH`/`EXIT_WARNING` state as **displayed fields**.
+- Rotation may **tilt the ordering** and may not determine membership:
+  `rank_final = rank_raw + clamp(0.5 · z(rotation_score), −10, +10)`
+  percentile points, with **both `rank_raw` and `rank_final` shown** so the
+  size and direction of the effect is visible rather than baked in. The
+  tilt is bounded by construction, so no rotation state can push a name off
+  a list.
+- A high `rs_sector` or `rs_ig` percentile inside an `EXIT_WARNING` group is
+  **highlighted, not penalised twice**. Rotation is computed on a group
+  **average** while dispersion inside a group is wide, so the name holding
+  up while its sector is sold is frequently the position institutions keep
+  — the most interesting observation in that group, not a disqualified one.
+
+### 7.1 Report layout — rotation leads as context (AMD-0023 §2B)
+The report opens with rotation, then lists candidates independently of it.
+
+1. **Headline — rotation and regime.** The regime label, what changed since
+   yesterday, and two explicit lists:
+   - **Rotating IN** — groups in `ENTRY_WATCH`, or `Improving` with
+     `d_rs_mom5 > 0` three sessions running, each followed by **its member
+     tickers that appear on any candidate list**.
+   - **Rotating OUT** — groups in `EXIT_WARNING`, or `Leading`/`Weakening`
+     with `d_rs_mom5 < 0` three sessions running, same treatment.
+
+   A turning group with no candidates is **still listed, with an empty
+   ticker set**: that a group is moving and holds nothing worth buying is
+   itself a finding, and suppressing the row would hide it.
+2. **Long candidates** — ranked per playbook, each row tagged with its
+   group's quadrant and rotation state, **not filtered by either**.
+3. **Weakness — short / trim / avoid** — always present (§2C above).
+4. **Plain ticker lines** — one comma-separated line per bucket for
+   copy-paste into the operator's own charting tool. A convenience inside
+   the report, **not** an integration with any third-party platform; no
+   such integration is in scope.
+
+Every ticker shown carries its nearest support and resistance levels (§5
+Levels) beside the ATR stop, so the operator can judge whether the stop
+sits somewhere sensible rather than taking `1.5 · ATR` on faith.
 
 **Paper-account sizing (config):** equity 100,000 GBP; risk per trade 1%;
 stop 1.5·ATR14 (long) / 2·ATR14 (short); position cap 10% of equity; max
