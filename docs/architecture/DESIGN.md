@@ -97,7 +97,7 @@ ADR-0003 (data sources), ADR-0004 (model gateway), ADR-0005
 |---|---|---|---|
 | Polygon `GET /v2/aggs/grouped/locale/us/market/stocks/{date}?adjusted=true` | primary nightly OHLCV, all US tickers | 1 call per trading day; ≈500 calls for the 2-year backfill | 5 calls/min; 2 years; EOD delayed |
 | Bootstrap (yfinance or Stooq) | one-off 10+ year adjusted bars for universe + ETFs | once | unofficial; validated before use |
-| IBKR paper gateway (`ib_async`) | reconciliation sample (20 symbols/night, rotating), corporate-action truth, IV30 for ETFs/index | nightly | ≈60 historical requests / 10 min |
+| IBKR paper gateway (`ib_async`) | reconciliation sample (20 symbols/night, rotating, flagged-first), corporate-action truth, IV30 for ETFs/index | nightly | vendor limit ≈60 historical requests / 10 min; **the pacer implements a conservative 50** and the nightly budget is 46 (AMD-0020 §2D). Daily `TRADES` volume is **not** comparable with consolidated volume — measured ≈2× at WO-0008 — while closes are; see §3.3 |
 | FMP Basic | `profile` (GICS sector + industry group, fallback only), `earnings-calendar`, `dividends-calendar`, `splits-calendar` | daily calendars | 250 calls/day; the constituent endpoints are **402 on this plan** — AMD-0013 |
 | Public constituents table + `hanshof` CSV | current members with `GICS Sector`, `GICS Sub-Industry`, `Date added`; membership history to 2025-08-23, with a documented derivation for the gap | weekly | no key; see AMD-0013 §2C for the gap routing and the `membership.source` precision values |
 | `hanshof/sp500_constituents` CSV (MIT) | cross-check of membership 1996→ | monthly | — |
@@ -211,8 +211,15 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
   Validation records a judgement *about* a day; it is not a gate on
   persisting it. The quality seam is `bars_raw` → `bars`
   (`argus/data/adjust.py`).
-- Publication withholds a **day** whose `ingest_log.status` is
-  `'quarantined'` — a day-level verdict is a vendor-fault finding. It
+- Publication admits a day **only** where `ingest_log.status = 'ok'`
+  (AMD-0021 §2C) — never "any status other than `'quarantined'`". A day
+  holding `bars_raw` rows with no completed verdict is unjudged data, and
+  the remedy is `ingest revalidate`, not publication. A blocklist admits
+  every status invented after it was written, and AMD-0019 §2E invented
+  one. A judging failure **always** writes an `ingest_log` row, in
+  `revalidate_range` as well as `ingest_polygon_day`: a path that fails
+  without recording lets a day keep a stale verdict indefinitely.
+  A day-level verdict is a vendor-fault finding. It
   **never withholds a symbol-day for carrying a `bar_flags` row**
   (AMD-0019 §2A; AMD-0018 §2A's exclusion clause is withdrawn). A flag is
   an advisory that travels with the row: consumers join `bar_flags` on
@@ -265,14 +272,22 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
   more than 25% on the heaviest sessions number in the tens, not the
   hundreds. It is a named constant beside `_COVERAGE_MIN_PCT`, changeable
   only by Amendment, and a test must fail without it (CI-6).
-- A symbol's `bars` are bounded by that symbol's own listing life
-  (AMD-0018 §2F). Where a delisted member's ticker has been reassigned to
-  an unrelated company, WO-0007 must not join the two companies' rows into
-  one series: bars after the member's final `membership.end_date` are
-  excluded unless `config/ticker_renames.yaml` maps the symbol forward as
-  continuity (AMD-0014, AMD-0016). **This bounds the tail only: bars before
-  a symbol's first `start_date` are retained**, because the §5 features
-  need pre-entry history (AMD-0019 §2D). `MaterialiseReport` therefore
+- A symbol's `bars` tail is bounded **only where the ticker was reassigned
+  to a different entity** (AMD-0021 §2B, narrowing AMD-0018 §2F). The
+  discriminator is a **trading gap**, not rename continuity: where
+  `bars_raw` is continuous across the final `membership.end_date` — no gap
+  exceeding **20 trading days** — the post-exit bars are the same
+  company's and are **retained**, because a company that merely leaves the
+  index keeps trading and may re-enter. Where the gap exceeds 20 trading
+  days the tail is excluded and the symbol warned with its gap length:
+  that is the reassignment hazard, where joining the two runs would splice
+  a different company's prices onto a member's history.
+  `config/ticker_renames.yaml` continuity still suppresses the warning.
+  Rename continuity alone was the wrong test — it dropped 118,027 bars for
+  AAL, AAP, ALK, K, M and WHR, companies still trading that had simply
+  left the index, and that loss made the §3.3 survivorship gap worse
+  rather than better. **Leading history before the first `start_date` is
+  retained unconditionally** (AMD-0019 §2D). `MaterialiseReport` therefore
   reports two separate figures — `n_bars_before_first_membership`
   (counted, never warned) and
   `n_bars_after_final_end_without_continuity` (warned per symbol, the §2F
@@ -281,15 +296,36 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
   discontinuity in the old member's history and corrupts every 252-day
   momentum and relative-strength feature crossing it — the damage CI-2
   guards against for renames.
-- Reconciliation: 20 rotating members per night vs IBKR `ADJUSTED_LAST`
-  daily bars; tolerance 0.1% on close, 10% on volume; breaches written to
-  `reconcile_log` and surfaced.
+- Reconciliation: 20 members per night against IBKR daily bars, the sample
+  placing unresolved `jump_unexplained` flags first (AMD-0019 §3). Every
+  comparison is written to `reconcile_log`. **The gate is per-field, never
+  an aggregate rate** (AMD-0020 §2A).
+  **Close is the reconciliation**: it passes when `max |pct_diff| ≤ 0.5%`
+  **and** at most one comparison exceeds `0.1%`, with every exceedance
+  named in the report. At n=100 a `breach_rate < 0.01` gate permits zero
+  breaches and cannot express "one symbol needs a look"; that was a
+  criterion of mine, not a bar.
+  **Volume is recorded, not breached**: `reconcile_log.breach` is false for
+  volume rows. Our consolidated volume and IBKR's `TRADES` volume are not
+  the same quantity — median ours/theirs 2.03×, p5–p95 1.35–2.78×,
+  systematic across all 20 symbols, while Polygon and yfinance agree with
+  each other to 0.03%. The volume gate is therefore on **drift**, not
+  level: alert when the sample median ratio moves more than 25% from the
+  trailing 20-session median. A stable ≈2× is a fact about two vendors; a
+  jump to 5× means one of them broke.
 - Corporate actions are stored **per source** and never overwritten across
   sources: PK `(symbol, date, source)` on both `splits` and `dividends`
   (AMD-0012). WO-0007 resolves duplicates by the same precedence as bars —
   Polygon over yfinance — and records in `MaterialiseReport.warnings` any
   `(symbol, date)` where the sources disagree on a split ratio by more than
-  0.1% or on a dividend by more than one cent.
+  0.1% or on a dividend by more than one cent. **Dividend amounts are
+  normalised to one basis with the same `split_cum` before being compared**
+  (AMD-0021 §2D): Polygon stores `as_paid` and yfinance `split_adjusted`
+  (measured, WO-0013), so comparing raw amounts reports the split ratio as
+  a vendor disagreement — 228 warnings over 42 symbols, every one generated
+  by the correction itself. A split dated **on** the ex-date is divided
+  out: the divisor takes the last bar **before** the ex-date, because the
+  dividend was declared before the split.
 - **Every symbol in the current constituents table has exactly one open
   membership interval** (`end_date IS NULL`) (AMD-0014). If it is in the
   index today it is a current member; no derivation may leave it without a
@@ -389,9 +425,15 @@ date's breadth figures are flagged in `market_daily.coverage_flag` and
 excluded from PID-ARGUS-0004's lead-time study unless explicitly included.
 A sector or industry-group composite is computed over **classified**
 members only and reports its classification coverage with it (AMD-0016
-§2C). This is how the survivorship and classification gaps of §3.3 stay
-measurable per date instead of becoming unstated optimism in every
-backtest (AMD-0015 §2B, CI-8).
+§2C). Every coverage figure here **reports a measured value or is NULL — never
+a constant** (AMD-0021 §2F): a field that always reads `0` says "nothing
+was excluded" when it means "not computed", and is indistinguishable from
+a measurement at the point of reading. `n_symbol_days_flag_excluded` in
+particular reports the real count or `NULL`, and the Work Order that
+builds the aggregates calls `equal_weight_aggregate` rather than
+reimplementing it. This is how the survivorship and classification gaps of
+§3.3 stay measurable per date instead of becoming unstated optimism in
+every backtest (AMD-0015 §2B, CI-8).
 
 `pct_above_20/50/200`; advance–decline line; `nh20−nl20`; `nh252−nl252`;
 McClellan oscillator = EMA19(r) − EMA39(r) with r = (adv−dec)/(adv+dec),
@@ -496,6 +538,33 @@ stop 1.5·ATR14 (long) / 2·ATR14 (short); position cap 10% of equity; max
    trained on CPU; deployed only if out-of-sample IC beats the rules.
 
 ## 10. Operations and security
+- IBKR history requests are pacing-bound: the nightly budget is 46,
+  against an implemented pacer ceiling of 50 per 10 minutes and a vendor
+  limit of ≈60 (AMD-0020 §2D). The reconciliation sample size and the ETF
+  list are therefore **coupled to the pacer**: increasing either makes the
+  nightly run sleep, and is an architectural decision rather than a
+  parameter change. WO-0009 stays inside the budget or sleeps deliberately
+  and reports the wall time it cost.
+- `IB_PORT` must be a paper port (AMD-0019 §3). A non-paper port makes the
+  reconcile step report a configuration error; since the step is
+  `required=False`, the night continues rather than failing.
+- **Gateway topology** (AMD-0021 §2E): the **paper** gateway runs on
+  `dell-debian`; any live gateway runs on another host and is never
+  reachable from this application's configuration. A gateway listening on
+  a live port on `dell-debian` is a misconfiguration to be removed, not
+  something to be defended against by port number alone.
+- **The paper account is asserted on connect, not inferred from the
+  port.** After `connect(readonly=True)` the managed account identifier
+  delivered in the handshake must carry IBKR's paper prefix (`DU`/`DF`);
+  otherwise the client disconnects immediately and raises. **Only a
+  boolean leaves the check** — the identifier is never logged, stored,
+  filed in evidence or placed in an exception message (CI-7). This reads
+  handshake data already received and is **not** an account, order or
+  position request, which WO-0008 §3 continues to exclude. With the live
+  gateway on another host, `ib_host`'s loopback default (R3) is the first
+  of three independent barriers, the port allowlist the second and this
+  assertion the third.
+
 **Schedule (UK time; systemd timers; service user `argus`):**
 ```
 23:30 ingest      Polygon grouped-daily for T; FMP calendars; validate

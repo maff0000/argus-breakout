@@ -72,6 +72,14 @@ to be *measured*, not assumed — the last time I designed around an
 unverified vendor assumption it cost four Work Orders (ADR-0003, AMD-0013).
 
 ### (c) `float32` prices break the schema I specified
+> **RETRACTED — see AMD-0021 §2A.** This diagnosis was wrong. There was
+> never any float32: the views already cast to `DOUBLE` and the polars
+> frames were `Float64`. The 5.1e-8 differences came from **yfinance rows
+> published under the flag fallback**, which §2A of this Amendment
+> removes. §2C (prices stored `DOUBLE`) stands as belt and braces on
+> behaviour already correct. Do not act on the paragraph below as a
+> statement of cause.
+
 DESIGN §3.2 declares every price column `DOUBLE`. The materialised store
 holds `float32`, which is why published closes differ from Polygon's by up
 to 5e-8 relative. That is a conformance break, not an acceptance-criterion
