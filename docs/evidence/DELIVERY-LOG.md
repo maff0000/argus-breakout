@@ -84,3 +84,5 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-21T09:27Z  WO-0008  Audited GREEN  audited sha 6d531f5; no findings; evidence docs/evidence/WO-0008/
 2026-10-21T09:27Z  WO-0008  Live checks  paper gateway read-only, PO-confirmed: AC2 13 rows, AC5 pass, AC1 volume breach systematic (ruling 7, spec-defects.md)
 2026-10-21T09:27Z  WO-0008  PR Open  awaiting ARCHITECT ACCEPTANCE (never pre-authorised)
+2026-10-21T09:44Z  WO-0008  Accepted  explicit Architect acceptance, https://github.com/maff0000/argus-breakout/pull/11#issuecomment-6312702227
+2026-10-21T09:44Z  WO-0008  Closed  merged via PR #11
