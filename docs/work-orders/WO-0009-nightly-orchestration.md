@@ -21,6 +21,13 @@ the runbook and the phase-level operator acceptance evidence.
 
 ## 2. Scope (exhaustive)
 ```
+argus/data/providers/ibkr.py         modify  AMD-0021 §2E — PAPER-ACCOUNT ASSERTION. After connect(readonly=True), the managed account
+                                             identifier delivered in the handshake must carry IBKR's paper prefix ('DU'/'DF'); otherwise
+                                             disconnect immediately and raise ProviderError. ONLY A BOOLEAN LEAVES THE CHECK: the
+                                             identifier is never logged, stored, filed in evidence or placed in the exception message
+                                             (CI-7). This reads handshake data already received and is NOT an account, order or position
+                                             request — WO-0008 §3's exclusion stands. WO-0009 is the only Work Order that may touch this
+                                             file; WO-0014 does not, so the two stay concurrent
 argus/data/reconcile.py              modify  AMD-0020 §3.1 — per-field treatment: close breaches as now; VOLUME rows are recorded with
                                              breach=False (our consolidated volume and IBKR TRADES volume are not the same quantity,
                                              measured median 2.03× at WO-0008). ReconcileReport carries per-field pass/fail plus the
@@ -106,6 +113,7 @@ per step start/finish with `run_id`.
 - **AC7** — Zero members without an industry group (operator check) — phase criterion.
 - **AC8** — Runbook present and followed verbatim for the install (Auditor reads it; DC confirms each step executed).
 - **AC9** — (AMD-0020 §2B, §2C) `docs/evidence/WO-0009/ibkr-volume-basis.md` records the same 20 symbols re-requested with **`useRTH=False`** and the resulting ratio, settling whether the ≈2× gap is regular-hours scoping or off-exchange print exclusion; the conclusion is written into DESIGN §3.1. `docs/evidence/WO-0009/skyd-contract.md` confirms IBKR's `conId`, `primaryExchange` and long name against our **SKYD** and accounts for the 2.09% close difference on 2026-10-13. SKYD is one of the five renamed tickers, so a symbol-string contract mismatch there is a finding against the ticker mapping and a CI-2 question, not a tolerance question.
+- **AC11** — (AMD-0021 §2E) The paper-account assertion is proved both ways: a fake handshake returning a paper-prefixed identifier connects; one returning a live-prefixed identifier **disconnects and raises**, and neither the identifier nor any substring of it appears in the message, the logs or the filed evidence (test + Auditor grep). Non-vacuity: removing the assertion makes the live-prefix test fail.
 - **AC10** — The nightly run completes on the host with `IB_PORT` set to a paper port; with a non-paper port the `ibkr_reconcile` step reports a configuration error and the pipeline **continues** (the step is `required=False`) rather than failing the night (operator check: both runs' report JSONs filed, port values not recorded).
 
 ## 7. Evidence the Delivery Controller must file
