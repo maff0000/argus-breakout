@@ -3,7 +3,7 @@
 import typer
 
 from argus import __version__
-from argus.commands import adjust, events, ibkr, ingest, universe
+from argus.commands import adjust, diagnose, events, ibkr, ingest, universe
 
 app = typer.Typer(help="Argus-Breakout data pipeline", no_args_is_help=True)
 
@@ -11,10 +11,12 @@ app.add_typer(universe.app, name="universe")
 app.add_typer(ingest.app, name="ingest")
 app.add_typer(events.app, name="events")
 app.add_typer(adjust.app, name="adjust")
+app.add_typer(diagnose.app, name="diagnose")
 app.add_typer(ibkr.app, name="ibkr")
 
 # --- command module imports (append only; one line per Work Order) ---
 import argus.commands.adjust_cmds  # noqa: F401, E402
+import argus.commands.diagnose_cmds  # noqa: F401, E402
 import argus.commands.events_cmds  # noqa: F401, E402
 import argus.commands.ibkr_cmds  # noqa: F401, E402
 import argus.commands.ingest_bootstrap  # noqa: F401, E402
