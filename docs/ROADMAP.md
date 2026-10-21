@@ -94,6 +94,14 @@ WO-0013 `dividend-basis.md` standard, AMD-0021 §2A).
   DVN, FANG, COP, EXE, F, HP, HST) are known-suspect inputs, and any
   feature study crossing them must say so — the limitation travels with
   the number, CI-8-style.
+- **Rename classification from stored data: tried, measured, abandoned.**
+  WO-0015 returned 500 candidates because index maintenance is pairwise —
+  S&P replaces one name with another on a date, so every addition has an
+  adjacent leaver, and VMRK paired with 32 of them. The distinguishing fact
+  is corporate identity and no free source carries it. **Do not attempt
+  this again from membership and price alone** (AMD-0027 §1c, R8). If it
+  ever matters enough, the input is a corporate-actions feed or S&P's own
+  announcements, not a cleverer signal.
 - **Former members' history is not bootstrapped**, so 10 symbols' post-exit
   tails cannot be told from a reassignment (WO-0014 spec-gap 1). An
   ingestion decision, belonging with the R5 survivorship work.

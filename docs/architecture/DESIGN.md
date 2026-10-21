@@ -115,8 +115,16 @@ bars_raw       (symbol TEXT, date DATE, open DOUBLE, high DOUBLE, low DOUBLE, cl
                 ingested_at TIMESTAMP)                                         -- as received, with its adjustment basis
 splits         (symbol TEXT, date DATE, ratio DOUBLE NOT NULL, source TEXT)
                 -- PK (symbol, date, source). date = execution/effective date. ratio = to/from (2.0 for a 2:1).
-dividends      (symbol TEXT, date DATE, cash_amount DOUBLE NOT NULL, basis TEXT NOT NULL, source TEXT)
-                -- PK (symbol, date, source). date = ex-dividend date.
+dividends      (symbol TEXT, date DATE, cash_amount DOUBLE NOT NULL, basis TEXT NOT NULL,
+                source TEXT, vendor_id TEXT NOT NULL)
+                -- PK (symbol, date, source, vendor_id)  (AMD-0027 §2A). date = ex-dividend date.
+                -- vendor_id: the SOURCE'S OWN per-record identifier. Polygon supplies `id` on every
+                -- /v3/reference/dividends record (verified, WO-0015). A source with no record
+                -- identifier — yfinance, which delivers one summed figure per ex-date — uses 'sum'.
+                -- NOT dividend_type and NOT frequency: both of PGR's 2026-01-02 records are
+                -- dividend_type "CD", so type does not separate a quarterly from a special.
+                -- A source may legitimately report several dividends on one ex-date; the narrower
+                -- key silently kept one (measured: PGR 0.10 + 13.50 special, stored 0.10 alone).
                 -- basis {'as_paid','split_adjusted'} (AMD-0019 §2B): whether cash_amount sits on the
                 -- share count of the ex-date or is already restated onto the current basis. Recorded
                 -- per source from a measured check, never assumed. A dividend must be on the same
@@ -190,9 +198,21 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
   stored. Mixing the two overstates the adjustment by the split ratio: a
   4:1 split makes every earlier dividend count four times over, and
   `adj_close` carries that error into every return-type feature in §5.
-  Each source's basis is established by **measurement**, recorded in
+    Each source's basis is established by **measurement**, recorded in
   `dividends.basis`; a source whose basis cannot be established is a stop,
   never a default.
+  A symbol's dividend for an ex-date is the **sum of that source's
+  records** for it, taken after source precedence and after basis
+  normalisation (AMD-0027 §2A, §2B) — one row per vendor record, one total
+  per ex-date.
+  **Vendor completeness** (AMD-0027 §2D): where two sources' normalised,
+  summed totals for one `(symbol, date)` differ by more than **one cent and
+  2% relative**, the adjustment takes the **larger**, records which source
+  supplied it, and warns with both figures. The justification is
+  asymmetry — a vendor omitting a component is observed (Polygon carries
+  one of FCX's two 0.075 components), a vendor inventing one is not. The
+  comparison must be on **basis-normalised** amounts, or a split ratio
+  reads as a completeness gap.
   Price columns and `adj_close` are stored **DOUBLE** (AMD-0019 §2C);
   float32 puts a 6e-8 relative floor under every published close and every
   return derived from one. When a new split
