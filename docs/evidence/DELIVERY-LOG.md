@@ -93,3 +93,7 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-21T09:44Z  WO-0008  Accepted  explicit Architect acceptance, https://github.com/maff0000/argus-breakout/pull/11#issuecomment-6312702227
 2026-10-21T09:44Z  WO-0008  Closed  merged via PR #11
 2026-10-21T10:16Z  WO-0013  Integration fix  main merged after WO-0008; test-only structlog reset affa975; delta audit GREEN; re-acceptance requested
+2026-10-21T14:40Z  WO-0014  Implemented  head 6236748 (Implementer diff reviewed and committed by DC; mechanicals green on host)
+2026-10-21T14:40Z  WO-0014  Audited GREEN  audited sha 6236748; no findings; evidence docs/evidence/WO-0014/
+2026-10-21T14:40Z  WO-0014  Operator checks  copy of scratch store, no network: AC1-AC6 met; tails 118027->8480; see operator-checks.md
+2026-10-21T14:40Z  WO-0014  PR Open  awaiting ARCHITECT ACCEPTANCE (outside the AMD-0010 mandate)
