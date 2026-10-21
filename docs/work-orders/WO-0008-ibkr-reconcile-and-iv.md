@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Approved |
+| **Status** | PR Open |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.6, §8.7 (`ibkr reconcile`, `ibkr iv`) ; `DESIGN.md` §3.1, §3.3 (reconciliation), §3.2 (`iv_daily`, `reconcile_log`) ; ADR-0006 |
 | **Applicable Amendments** | AMD-0002, AMD-0012, AMD-0019 (delta, pre-dispatch — §2 paper-port enforcement and flag-first sampling) |
 | **Base SHA** | main at Closure of WO-0007 |
