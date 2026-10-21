@@ -70,3 +70,8 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-21T00:31Z  WO-0004  Audited GREEN  whole-branch pass 2 at 46ad537; evidence docs/evidence/WO-0004/
 2026-10-21T00:31Z  WO-0004  Accepted  delegated acceptance against the pre-committed AMD-0018 section 3 conditions 1-5 (all true): 0 quarantined of 520 days, 128 jump_unexplained flags
 2026-10-21T00:31Z  WO-0004  Closed  merged via PR
+2026-10-21T00:36Z  WO-0012  In Progress  Implementer dispatched; base 4321d92
+2026-10-21T00:54Z  WO-0012  Implemented  head 48eb7a5 (diff reviewed and committed by DC)
+2026-10-21T00:54Z  WO-0012  Audited GREEN  whole-branch at 48eb7a5; evidence docs/evidence/WO-0012/
+2026-10-21T00:54Z  WO-0012  Accepted  delegated acceptance (AMD-0017 s3 less validate.py conditions); scope extension in test_schema/test_cli flagged for ratification
+2026-10-21T00:54Z  WO-0012  Closed  merged via PR

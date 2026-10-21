@@ -1,10 +1,11 @@
+import shutil
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
 import pytest
 
-from argus.data.store import Store
+from argus.data.store import Store, StoreRelocatedError
 
 SAMPLE = Path(__file__).parent / "fixtures" / "bars" / "sample_bars.parquet"
 QUOTED = "O'Brien; DROP TABLE symbols;--"
@@ -176,3 +177,85 @@ def test_read_splits_and_dividends(store):
         store.read_splits(["AAA' OR '1'='1"], a, b)
     with pytest.raises(ValueError):
         store.read_dividends(["bad symbol"], a, b)
+
+
+# ---------------------------------------------------------------------- relocation (WO-0012)
+def _bars_raw_row(sym, close):
+    return pl.DataFrame(
+        {
+            "symbol": [sym],
+            "date": [date(2024, 1, 2)],
+            "open": [close],
+            "high": [close],
+            "low": [close],
+            "close": [close],
+            "volume": [1.0],
+            "source": ["fixture"],
+            "basis": ["unadjusted"],
+        }
+    )
+
+
+def _count_raw(s):
+    return s.read("SELECT count(*) AS n FROM bars_raw")["n"][0]
+
+
+@pytest.fixture
+def relocated(tmp_path):
+    """An initialised store with 1 bars_raw row, copied to a new directory with 0 rows."""
+    old = Store(tmp_path / "old")
+    old.init_schema()
+    old.write_bars_raw(_bars_raw_row("OLD", 1.0))
+    shutil.copytree(old.store_dir, tmp_path / "new")
+    return old, Store(tmp_path / "new")
+
+
+def test_relocated_store_read_only_raises(relocated):
+    old, new = relocated
+    with pytest.raises(StoreRelocatedError) as exc:
+        new.read("SELECT count(*) FROM bars_raw")
+    assert str(old.store_dir.resolve()) in str(exc.value)
+    assert str(new.store_dir.resolve()) in str(exc.value)
+    assert "init-store" in str(exc.value)
+    # the original is not a relocation
+    assert _count_raw(old) == 1
+
+
+def test_relocated_store_read_write_repairs(relocated):
+    old, new = relocated
+    # a plain read-write connect (not init_schema) is what repairs the views
+    new.connect().close()
+    assert new.repaired_from == str(old.store_dir.resolve())
+    assert new.recorded_store_dir() == str(new.store_dir.resolve())
+    new.write_bars_raw(_bars_raw_row("NEW1", 2.0))
+    new.write_bars_raw(_bars_raw_row("NEW2", 3.0))
+    new.write_bars_raw(_bars_raw_row("NEW3", 4.0))
+    # copy carried OLD (1 row) + 3 new rows = 4, read from the new directory's files
+    assert _count_raw(new) == 4
+    assert _count_raw(old) == 1  # old store untouched by new writes
+    assert old.recorded_store_dir() == str(old.store_dir.resolve())
+
+
+def test_relocated_store_does_not_read_old_path(relocated):
+    old, new = relocated
+    new.connect().close()  # read-write connect repairs the views
+    # data present ONLY in the old directory, written after the copy
+    old.write_bars_raw(_bars_raw_row("ONLYOLD", 9.0))
+    assert _count_raw(old) == 2
+    seen = new.read("SELECT symbol FROM bars_raw ORDER BY symbol")["symbol"].to_list()
+    assert seen == ["OLD"]
+    assert "ONLYOLD" not in seen
+
+
+def test_fresh_and_legacy_store_are_not_relocations(tmp_path):
+    s = Store(tmp_path / "s")
+    s.init_schema()
+    assert s.repaired_from is None
+    # a pre-schema-4 store (no store_meta) is first use, not a relocation
+    con = s.connect()
+    con.execute("DROP TABLE store_meta")
+    con.close()
+    assert s.read("SELECT count(*) AS n FROM symbols")["n"][0] == 0
+    s.init_schema()
+    assert s.repaired_from is None
+    assert s.recorded_store_dir() == str(s.store_dir.resolve())

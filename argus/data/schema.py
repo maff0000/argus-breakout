@@ -8,8 +8,8 @@ DDL contains the placeholder `__GLOB__`, which `Store.init_schema` replaces
 with the quoted parquet glob under the configured store directory.
 """
 
-# 3: bar_flags (AMD-0018). 4 is reserved for WO-0012 store_meta.
-SCHEMA_VERSION = 3
+# 3: bar_flags (AMD-0018). 4: store_meta (AMD-0017/AMD-0018 2G, store relocation identity).
+SCHEMA_VERSION = 4
 
 _BAR_VIEW = (
     "CREATE OR REPLACE VIEW {name} AS SELECT {cols} "
@@ -109,6 +109,9 @@ DDL: dict[str, str] = {
     "bar_flags": """CREATE TABLE IF NOT EXISTS bar_flags (
         symbol TEXT, date DATE, source TEXT, flag TEXT, detail TEXT,
         PRIMARY KEY (symbol, date, source, flag))""",
+    # Store identity: key 'store_dir' = resolved store directory the views were built against.
+    "store_meta": """CREATE TABLE IF NOT EXISTS store_meta (
+        key TEXT PRIMARY KEY, value TEXT)""",
     "schema_version": """CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER PRIMARY KEY, applied_at TIMESTAMP)""",
 }
