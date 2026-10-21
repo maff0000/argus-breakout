@@ -16,8 +16,8 @@ mirror; the Work Order file is authoritative.
 | [WO-0005](WO-0005-bootstrap-history.md) | Bootstrap history provider (yfinance) | WO-0002 | P0-C | Approved |
 | [WO-0006](WO-0006-fmp-calendars-events.md) | FMP calendars → events | WO-0003 | P0-D | Approved |
 | [WO-0007](WO-0007-adjust-and-materialise.md) | Adjustment and materialisation of `bars` | WO-0004, WO-0005 | P0-D | Approved |
-| [WO-0008](WO-0008-ibkr-reconcile-and-iv.md) | IBKR reconciliation and implied volatility | WO-0007 | P0-E | Approved |
-| [WO-0009](WO-0009-nightly-orchestration.md) | Nightly orchestration, systemd, runbook, phase acceptance | WO-0003, 0006, 0007, 0008 | P0-F | Approved |
+| [WO-0008](WO-0008-ibkr-reconcile-and-iv.md) | IBKR reconciliation and implied volatility (+ AMD-0019 delta: paper-port guard, flag-first sampling) | WO-0007 | P0-E | **Accepted @ `6d531f5`** — merging on CI green; AC1 ratified as a spec defect (AMD-0020) |
+| [WO-0009](WO-0009-nightly-orchestration.md) | Nightly orchestration, systemd, runbook, phase acceptance (+ AMD-0020 delta: per-field reconciliation gate, pacing budget, AC6 replaced) | WO-0003, 0006, 0007, 0008 | P0-F | Approved |
 
 ## PID-ARGUS-0000 — repository security (corrective)
 

@@ -97,7 +97,7 @@ ADR-0003 (data sources), ADR-0004 (model gateway), ADR-0005
 |---|---|---|---|
 | Polygon `GET /v2/aggs/grouped/locale/us/market/stocks/{date}?adjusted=true` | primary nightly OHLCV, all US tickers | 1 call per trading day; ≈500 calls for the 2-year backfill | 5 calls/min; 2 years; EOD delayed |
 | Bootstrap (yfinance or Stooq) | one-off 10+ year adjusted bars for universe + ETFs | once | unofficial; validated before use |
-| IBKR paper gateway (`ib_async`) | reconciliation sample (20 symbols/night, rotating), corporate-action truth, IV30 for ETFs/index | nightly | ≈60 historical requests / 10 min |
+| IBKR paper gateway (`ib_async`) | reconciliation sample (20 symbols/night, rotating, flagged-first), corporate-action truth, IV30 for ETFs/index | nightly | vendor limit ≈60 historical requests / 10 min; **the pacer implements a conservative 50** and the nightly budget is 46 (AMD-0020 §2D). Daily `TRADES` volume is **not** comparable with consolidated volume — measured ≈2× at WO-0008 — while closes are; see §3.3 |
 | FMP Basic | `profile` (GICS sector + industry group, fallback only), `earnings-calendar`, `dividends-calendar`, `splits-calendar` | daily calendars | 250 calls/day; the constituent endpoints are **402 on this plan** — AMD-0013 |
 | Public constituents table + `hanshof` CSV | current members with `GICS Sector`, `GICS Sub-Industry`, `Date added`; membership history to 2025-08-23, with a documented derivation for the gap | weekly | no key; see AMD-0013 §2C for the gap routing and the `membership.source` precision values |
 | `hanshof/sp500_constituents` CSV (MIT) | cross-check of membership 1996→ | monthly | — |
@@ -281,9 +281,23 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
   discontinuity in the old member's history and corrupts every 252-day
   momentum and relative-strength feature crossing it — the damage CI-2
   guards against for renames.
-- Reconciliation: 20 rotating members per night vs IBKR `ADJUSTED_LAST`
-  daily bars; tolerance 0.1% on close, 10% on volume; breaches written to
-  `reconcile_log` and surfaced.
+- Reconciliation: 20 members per night against IBKR daily bars, the sample
+  placing unresolved `jump_unexplained` flags first (AMD-0019 §3). Every
+  comparison is written to `reconcile_log`. **The gate is per-field, never
+  an aggregate rate** (AMD-0020 §2A).
+  **Close is the reconciliation**: it passes when `max |pct_diff| ≤ 0.5%`
+  **and** at most one comparison exceeds `0.1%`, with every exceedance
+  named in the report. At n=100 a `breach_rate < 0.01` gate permits zero
+  breaches and cannot express "one symbol needs a look"; that was a
+  criterion of mine, not a bar.
+  **Volume is recorded, not breached**: `reconcile_log.breach` is false for
+  volume rows. Our consolidated volume and IBKR's `TRADES` volume are not
+  the same quantity — median ours/theirs 2.03×, p5–p95 1.35–2.78×,
+  systematic across all 20 symbols, while Polygon and yfinance agree with
+  each other to 0.03%. The volume gate is therefore on **drift**, not
+  level: alert when the sample median ratio moves more than 25% from the
+  trailing 20-session median. A stable ≈2× is a fact about two vendors; a
+  jump to 5× means one of them broke.
 - Corporate actions are stored **per source** and never overwritten across
   sources: PK `(symbol, date, source)` on both `splits` and `dividends`
   (AMD-0012). WO-0007 resolves duplicates by the same precedence as bars —
@@ -496,6 +510,17 @@ stop 1.5·ATR14 (long) / 2·ATR14 (short); position cap 10% of equity; max
    trained on CPU; deployed only if out-of-sample IC beats the rules.
 
 ## 10. Operations and security
+- IBKR history requests are pacing-bound: the nightly budget is 46,
+  against an implemented pacer ceiling of 50 per 10 minutes and a vendor
+  limit of ≈60 (AMD-0020 §2D). The reconciliation sample size and the ETF
+  list are therefore **coupled to the pacer**: increasing either makes the
+  nightly run sleep, and is an architectural decision rather than a
+  parameter change. WO-0009 stays inside the budget or sleeps deliberately
+  and reports the wall time it cost.
+- `IB_PORT` must be a paper port (AMD-0019 §3). A non-paper port makes the
+  reconcile step report a configuration error; since the step is
+  `required=False`, the night continues rather than failing.
+
 **Schedule (UK time; systemd timers; service user `argus`):**
 ```
 23:30 ingest      Polygon grouped-daily for T; FMP calendars; validate
