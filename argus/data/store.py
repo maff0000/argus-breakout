@@ -14,9 +14,12 @@ from pathlib import Path
 
 import duckdb
 import polars as pl
+import structlog
 
 from argus.data import schema
 from argus.data.tickers import is_valid
+
+log = structlog.get_logger()
 
 DB_NAME = "argus.duckdb"
 _EMPTY_YEAR = "year=1900"
@@ -77,10 +80,13 @@ def _atomic_write_parquet(df: pl.DataFrame, target: Path) -> None:
 
 
 class Store:
-    def __init__(self, store_dir: Path) -> None:
+    def __init__(self, store_dir: Path, config_dir: Path | None = None) -> None:
         self.store_dir = Path(store_dir)
         self.db_path = self.store_dir / DB_NAME
         self.parquet_dir = self.store_dir / "parquet"
+        # Only `resolve_symbol` reads config; None means settings.argus_config_dir at call time.
+        self._config_dir = None if config_dir is None else Path(config_dir)
+        self._rename_chain: dict[str, str] | None = None
 
     # ------------------------------------------------------------------ connection
     def connect(self, read_only: bool = False) -> duckdb.DuckDBPyConnection:
@@ -234,9 +240,9 @@ class Store:
             params.append(source)
         return self.read(sql + " ORDER BY symbol, date, source", params)
 
-    # ------------------------------------------------------------------ bars
-    def write_bars(self, df: pl.DataFrame) -> int:
-        """Replace the partition of every symbol present in `df` (symbol=<SYM>)."""
+    # ------------------------------------------------------------------ bars / etf_bars
+    def _write_bar_table(self, sub: str, df: pl.DataFrame) -> int:
+        """Replace the partition of every symbol present in `df` (`<sub>/symbol=<SYM>`)."""
         if df.is_empty():
             return 0
         missing = [c for c in schema.BARS_COLUMNS if c not in df.columns]
@@ -246,18 +252,35 @@ class Store:
         _check_symbols(df["symbol"].unique().to_list())
         df = df.unique(subset=["symbol", "date"], keep="last", maintain_order=True)
         for (sym,), part in df.partition_by("symbol", as_dict=True, maintain_order=True).items():
-            target = self.parquet_dir / "bars" / f"symbol={sym}" / _PARTITION_FILE
+            target = self.parquet_dir / sub / f"symbol={sym}" / _PARTITION_FILE
             _atomic_write_parquet(part.sort("date"), target)
         return df.height
 
-    def read_bars(self, symbols: list[str] | None, start: date, end: date) -> pl.DataFrame:
-        sql = "SELECT * FROM bars WHERE date >= ? AND date <= ?"
+    def _read_bar_table(
+        self, table: str, symbols: list[str] | None, start: date, end: date
+    ) -> pl.DataFrame:
+        # `table` is one of two constant names chosen by the callers below.
+        sql = "SELECT * FROM " + table + " WHERE date >= ? AND date <= ?"  # noqa: S608
         params: list = [start, end]
         if symbols is not None:
             _check_symbols(symbols)
             sql += " AND symbol IN (SELECT unnest(?))"
             params.append(symbols)
         return self.read(sql + " ORDER BY symbol, date", params)
+
+    def write_bars(self, df: pl.DataFrame) -> int:
+        """Replace the partition of every symbol present in `df` (symbol=<SYM>)."""
+        return self._write_bar_table("bars", df)
+
+    def read_bars(self, symbols: list[str] | None, start: date, end: date) -> pl.DataFrame:
+        return self._read_bar_table("bars", symbols, start, end)
+
+    def write_etf_bars(self, df: pl.DataFrame) -> int:
+        """As `write_bars`, for symbols classified as ETFs (`etf_bars`)."""
+        return self._write_bar_table("etf_bars", df)
+
+    def read_etf_bars(self, symbols: list[str] | None, start: date, end: date) -> pl.DataFrame:
+        return self._read_bar_table("etf_bars", symbols, start, end)
 
     # ------------------------------------------------------------------ corporate actions
     def _read_actions(
@@ -277,6 +300,58 @@ class Store:
 
     def read_dividends(self, symbols: list[str] | None, start: date, end: date) -> pl.DataFrame:
         return self._read_actions("dividends", symbols, start, end)
+
+    # ------------------------------------------------------------------ quality verdicts
+    def read_ingest_verdicts(self, source: str) -> pl.DataFrame:
+        """(date, status): the latest ingest_log verdict per day for `source`."""
+        return self.read(
+            "SELECT date, status FROM ingest_log WHERE source = ? "
+            "QUALIFY row_number() OVER (PARTITION BY date ORDER BY finished_at DESC) = 1",
+            [source],
+        )
+
+    def read_bar_flags(self, symbols: list[str] | None, flags: list[str]) -> pl.DataFrame:
+        """(symbol, date, source, flag) rows of bar_flags carrying one of `flags`."""
+        sql = "SELECT symbol, date, source, flag FROM bar_flags WHERE flag IN (SELECT unnest(?))"
+        params: list = [flags]
+        if symbols is not None:
+            _check_symbols(symbols)
+            sql += " AND symbol IN (SELECT unnest(?))"
+            params.append(symbols)
+        return self.read(sql + " ORDER BY symbol, date, source, flag", params)
+
+    # ------------------------------------------------------------------ renames (AMD-0016 2D)
+    def _renames(self) -> dict[str, str]:
+        """old ticker -> new ticker from config/ticker_renames.yaml (read once per Store)."""
+        if self._rename_chain is None:
+            # Imported here: argus.data.universe imports this module.
+            from argus.data.universe import load_renames
+            from argus.settings import get_settings
+
+            config_dir = self._config_dir or get_settings().argus_config_dir
+            self._rename_chain = {r.old: r.new for r in load_renames(config_dir)}
+        return self._rename_chain
+
+    def resolve_symbol(self, symbol: str, as_of: date) -> str:
+        """The symbol under which bars for `symbol` on `as_of` are stored.
+
+        Follows the `config/ticker_renames.yaml` chain FORWARD to the current symbol: the free
+        sources serve a renamed company's whole history under its new ticker (AMD-0016 2D), so
+        the redirection does not depend on `as_of`, which only labels the logged record. An
+        unmapped symbol is returned unchanged; the caller counts one with no bars as
+        `without bars`. Every redirection is logged (`symbol_redirected`).
+        """
+        _check_symbols([symbol])
+        renames = self._renames()
+        resolved, seen = symbol, {symbol}
+        while resolved in renames and renames[resolved] not in seen:
+            resolved = renames[resolved]
+            seen.add(resolved)
+        if resolved != symbol:
+            log.info(
+                "symbol_redirected", symbol=symbol, resolved=resolved, as_of=as_of.isoformat()
+            )
+        return resolved
 
     # ------------------------------------------------------------------ catalog helpers
     def members_on(self, d: date) -> list[str]:

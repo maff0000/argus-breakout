@@ -70,3 +70,4 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-21T00:31Z  WO-0004  Audited GREEN  whole-branch pass 2 at 46ad537; evidence docs/evidence/WO-0004/
 2026-10-21T00:31Z  WO-0004  Accepted  delegated acceptance against the pre-committed AMD-0018 section 3 conditions 1-5 (all true): 0 quarantined of 520 days, 128 jump_unexplained flags
 2026-10-21T00:31Z  WO-0004  Closed  merged via PR
+2026-10-21T00:36Z  WO-0007  In Progress  Implementer dispatched; base 4321d92

@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Approved |
+| **Status** | In Progress |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.7 (`adjust materialise`) ; `DESIGN.md` §3.2 (`bars`, `etf_bars`), §3.3 (adjustment rule) |
-| **Applicable Amendments** | AMD-0002, AMD-0012, AMD-0016 |
-| **Base SHA** | main at Closure of WO-0004 and WO-0005 |
+| **Applicable Amendments** | AMD-0002, AMD-0012, AMD-0014, AMD-0016, AMD-0018 |
+| **Base SHA** | 4321d92eeea6546a8095ecda3f22e5065837cae4 |
 | **Branch** | `wo/0007-adjust-and-materialise` |
 | **Depends on** | WO-0004, WO-0005 |
 | **Parallel group** | P0-D (with WO-0006) |
