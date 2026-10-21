@@ -80,16 +80,17 @@ def test_actions_measures_not_null(tmp_path):
             con.execute("INSERT INTO splits VALUES (?, ?, NULL, ?)", ["AAA", date(2024, 1, 2), "x"])
         with pytest.raises(duckdb.ConstraintException):
             con.execute(
-                "INSERT INTO dividends VALUES (?, ?, NULL, ?)", ["AAA", date(2024, 1, 2), "x"]
+                "INSERT INTO dividends VALUES (?, ?, NULL, 'as_paid', ?)",
+                ["AAA", date(2024, 1, 2), "x"],
             )
     finally:
         con.close()
 
 
-def test_schema_version_is_4(tmp_path):
+def test_schema_version_is_5(tmp_path):
     store = Store(tmp_path / "store")
     store.init_schema()
     store.init_schema()
-    assert SCHEMA_VERSION == 4
+    assert SCHEMA_VERSION == 5
     sv = store.read("SELECT version FROM schema_version")
-    assert sv["version"].to_list() == [4]
+    assert sv["version"].to_list() == [5]
