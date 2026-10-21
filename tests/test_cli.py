@@ -15,5 +15,5 @@ def test_init_store_creates_store(clean_env, tmp_path):
     clean_env.setenv("ARGUS_STORE_DIR", str(tmp_path / "store"))
     result = runner.invoke(app, ["init-store"])
     assert result.exit_code == 0
-    assert "store ready: 19 tables" in result.output
+    assert "store ready: 20 tables" in result.output
     assert (tmp_path / "store" / "argus.duckdb").exists()

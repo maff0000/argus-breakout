@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Approved |
+| **Status** | Closed |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.6, §8.7 (`ingest polygon`, `ingest polygon-actions`) ; `DESIGN.md` §3.1, §3.3 ; ADR-0003 |
 | **Applicable Amendments** | AMD-0002, AMD-0012, AMD-0016, AMD-0017, AMD-0018 |
-| **Base SHA** | main at Closure of WO-0002 |
+| **Base SHA** | 9a7a505 (main with AMD-0018) |
 | **Branch** | `wo/0004-polygon-provider` |
 | **Depends on** | WO-0002 |
 | **Parallel group** | P0-C (with WO-0003, WO-0005) |

@@ -1,0 +1,50 @@
+{
+ "results": [
+  {
+   "cash_amount": 0.25,
+   "declaration_date": "2026-01-01",
+   "dividend_type": "CD",
+   "ex_dividend_date": "2026-03-02",
+   "frequency": 4,
+   "id": "fx-MAA2026-03-02",
+   "pay_date": "2026-03-02",
+   "record_date": "2026-03-02",
+   "ticker": "MAA"
+  },
+  {
+   "cash_amount": 0.5,
+   "declaration_date": "2026-01-01",
+   "dividend_type": "CD",
+   "ex_dividend_date": "2026-05-10",
+   "frequency": 4,
+   "id": "fx-MAD2026-05-10",
+   "pay_date": "2026-05-10",
+   "record_date": "2026-05-10",
+   "ticker": "MAD"
+  },
+  {
+   "cash_amount": 0.1,
+   "declaration_date": "2026-01-01",
+   "dividend_type": "CD",
+   "ex_dividend_date": "2026-05-10",
+   "frequency": 4,
+   "id": "fx-NAA2026-05-10",
+   "pay_date": "2026-05-10",
+   "record_date": "2026-05-10",
+   "ticker": "NAA"
+  },
+  {
+   "cash_amount": 0.0,
+   "declaration_date": "2026-01-01",
+   "dividend_type": "CD",
+   "ex_dividend_date": "2026-05-10",
+   "frequency": 4,
+   "id": "fx-BRK.B2026-05-10",
+   "pay_date": "2026-05-10",
+   "record_date": "2026-05-10",
+   "ticker": "BRK.B"
+  }
+ ],
+ "status": "OK",
+ "request_id": "fixture"
+}

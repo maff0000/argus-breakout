@@ -1,0 +1,21 @@
+{
+ "results": [
+  {
+   "execution_date": "2026-03-02",
+   "id": "fx-MAA",
+   "split_from": 1,
+   "split_to": 4,
+   "ticker": "MAA"
+  },
+  {
+   "execution_date": "2026-04-15",
+   "id": "fx-MAB",
+   "split_from": 10,
+   "split_to": 1,
+   "ticker": "MAB"
+  }
+ ],
+ "status": "OK",
+ "request_id": "fixture",
+ "next_url": "https://api.polygon.io/v3/reference/splits?cursor=page2token"
+}
