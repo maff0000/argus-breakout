@@ -550,7 +550,10 @@ stop 1.5·ATR14 (long) / 2·ATR14 (short); position cap 10% of equity; max
   `required=False`, the night continues rather than failing.
 - **Gateway topology** (AMD-0021 §2E): the **paper** gateway runs on
   `dell-debian`; any live gateway runs on another host and is never
-  reachable from this application's configuration. A gateway listening on
+  reachable from this application's configuration. The **absence** of a
+  live gateway on the nightly host is verified at install (WO-0009 AC10a,
+  AMD-0022 §2C), not assumed: two of the three barriers below hold only
+  while that is true. A gateway listening on
   a live port on `dell-debian` is a misconfiguration to be removed, not
   something to be defended against by port number alone.
 - **The paper account is asserted on connect, not inferred from the

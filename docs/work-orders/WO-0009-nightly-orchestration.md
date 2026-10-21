@@ -86,6 +86,16 @@ reconciliation verdict, not `breach_rate`; the ingest steps read the
 per-day `ingest_log` verdicts, because a quarantined day exits 0 by
 design (ratified WO-0004 spec-gap 5).
 
+**Logging is configured once per process** (AMD-0022). `configure_logging()`
+ends with `PrintLoggerFactory(file=sys.stdout)`, which binds the stdout
+**object** at call time rather than resolving it at each write. So the
+entrypoint calls it **exactly once**, before any step runs; no step
+re-enters it, and nothing replaces or redirects `sys.stdout` afterwards.
+`argus nightly` runs every step in one process, so a post-configuration
+redirect would send every later JSON line to an object nobody reads —
+silently, with no error, and with the run still reporting success. Found
+as a test-isolation failure at WO-0013; the production edge is this one.
+
 **IBKR pacing is a stated constraint** (AMD-0020 §2D): the nightly budget
 is 46 history requests against the pacer's 50 per 10 minutes — four of
 headroom — so the step reports the pacer's sleep time, and growing the
@@ -113,7 +123,9 @@ per step start/finish with `run_id`.
 - **AC7** — Zero members without an industry group (operator check) — phase criterion.
 - **AC8** — Runbook present and followed verbatim for the install (Auditor reads it; DC confirms each step executed).
 - **AC9** — (AMD-0020 §2B, §2C) `docs/evidence/WO-0009/ibkr-volume-basis.md` records the same 20 symbols re-requested with **`useRTH=False`** and the resulting ratio, settling whether the ≈2× gap is regular-hours scoping or off-exchange print exclusion; the conclusion is written into DESIGN §3.1. `docs/evidence/WO-0009/skyd-contract.md` confirms IBKR's `conId`, `primaryExchange` and long name against our **SKYD** and accounts for the 2.09% close difference on 2026-10-13. SKYD is one of the five renamed tickers, so a symbol-string contract mismatch there is a finding against the ticker mapping and a CI-2 question, not a tolerance question.
+- **AC12** — (AMD-0022) The nightly run's **log output is counted, not assumed**: the captured stdout holds valid JSON on every line, with one start and one finish record per executed step carrying the shared `run_id`, and the counts are filed (operator check). Non-vacuity (CI-6): configuring logging against a stale stdout object, or redirecting stdout after configuration, must make this fail. ADR-0008 constraint 6 requires structured JSON on stdout and nothing yet proves a line arrives; a logging requirement with no check that logging happened is vacuous.
 - **AC11** — (AMD-0021 §2E) The paper-account assertion is proved both ways: a fake handshake returning a paper-prefixed identifier connects; one returning a live-prefixed identifier **disconnects and raises**, and neither the identifier nor any substring of it appears in the message, the logs or the filed evidence (test + Auditor grep). Non-vacuity: removing the assertion makes the live-prefix test fail.
+- **AC10a** — (AMD-0022) **Precondition, checked at install:** nothing on the host is listening on an IBKR live port, recorded as a pass/fail with **no port or host values filed** (CI-7). The Product Owner has removed the stray live-port gateway and archived its container; this check is what keeps AMD-0021 §2E's three barriers — loopback default, port allowlist, paper-account assertion — measured rather than merely intended. A fail here is a **stop**: the nightly does not install onto a host that is also serving a live gateway.
 - **AC10** — The nightly run completes on the host with `IB_PORT` set to a paper port; with a non-paper port the `ibkr_reconcile` step reports a configuration error and the pipeline **continues** (the step is `required=False`) rather than failing the night (operator check: both runs' report JSONs filed, port values not recorded).
 
 ## 7. Evidence the Delivery Controller must file
