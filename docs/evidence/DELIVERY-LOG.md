@@ -66,3 +66,7 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-20T19:27Z  WO-0006  Audited GREEN  pass 1 at 9d6e192, whole-branch pass 2 at 9a841b0; evidence docs/evidence/WO-0006/
 2026-10-20T19:27Z  WO-0006  Accepted  delegated acceptance; ruling 7 on AC1 coverage (39 of 518 = 7.5%), docs/evidence/WO-0006/spec-defects.md
 2026-10-20T19:27Z  WO-0006  Closed  merged via PR
+2026-10-21T00:31Z  WO-0004  Implemented  AMD-0018 delta at 46ad537 (diff reviewed and committed by DC)
+2026-10-21T00:31Z  WO-0004  Audited GREEN  whole-branch pass 2 at 46ad537; evidence docs/evidence/WO-0004/
+2026-10-21T00:31Z  WO-0004  Accepted  delegated acceptance against the pre-committed AMD-0018 section 3 conditions 1-5 (all true): 0 quarantined of 520 days, 128 jump_unexplained flags
+2026-10-21T00:31Z  WO-0004  Closed  merged via PR
