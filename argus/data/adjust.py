@@ -67,6 +67,8 @@ _DIVIDEND_BASES = frozenset({"as_paid", "split_adjusted"})
 _PCT_THRESHOLD = 0.5  # close disagreement between sources, percent (WO-0007 4)
 _RATIO_TOLERANCE = 0.001  # split ratio disagreement, relative (0.1%, AMD-0012)
 _DIVIDEND_TOLERANCE = 0.01  # dividend disagreement, one cent (AMD-0012)
+# AMD-0027 2D: past one cent AND this fraction of the larger total, the larger total wins.
+_DIVIDEND_REL_TOLERANCE = 0.02
 # AMD-0021 2B: a symbol's post-membership tail is excluded only where the ticker was REASSIGNED.
 # A reassigned ticker's hiatus runs to months or years (a delisting, then a different company
 # taking the symbol); a company that merely leaves the index trades straight through its
@@ -200,28 +202,89 @@ def resolve_splits(splits: pl.DataFrame) -> tuple[pl.DataFrame, list[str]]:
     )
 
 
+def totals_differ_by_a_cent(a: float, b: float) -> bool:
+    """Two normalised ex-date totals more than one cent apart (the warning threshold)."""
+    return abs(round(a, 4) - round(b, 4)) > _DIVIDEND_TOLERANCE + 1e-9
+
+
+def totals_materially_differ(a: float, b: float) -> bool:
+    """AMD-0027 2D: more than one cent AND more than 2% of the larger total (both required)."""
+    larger = max(a, b)
+    return (
+        totals_differ_by_a_cent(a, b)
+        and larger > 0
+        and abs(round(a, 4) - round(b, 4)) / larger > _DIVIDEND_REL_TOLERANCE
+    )
+
+
 def resolve_dividends(
     dividends: pl.DataFrame, split_cum_at=None
 ) -> tuple[pl.DataFrame, list[str]]:
-    """Duplicates resolved by precedence; amounts more than one cent apart are warned.
+    """One row per (symbol, ex-date): the SUM of one source's records for it (AMD-0027 2A, 2B).
+
+    Within a source, every vendor record of an ex-date is summed (a quarterly and a special are
+    two records, one total). Across sources, Polygon takes precedence over yfinance, EXCEPT
+    where the two sources' normalised totals differ by more than one cent AND `_DIVIDEND_REL`
+    relative to the larger: then the LARGER total is taken and `total_source` records which
+    source supplied it (AMD-0027 2D: a vendor omitting a component is observed, one inventing
+    one is not). A difference of more than one cent but within the relative band is warned and
+    precedence is untouched, as before. Every warning carries both figures.
 
     The comparison is on one basis (AMD-0021 2D): `split_cum_at(symbol, ex_date)` is the
     cumulative ratio of the splits after the ex-date, an 'as_paid' amount is divided by it and a
     'split_adjusted' one is used as stored, so the thresholds apply to comparable numbers.
-    Without `split_cum_at` (or without a `basis` column) amounts are compared as stored."""
-    comparable = None
-    if split_cum_at is not None and "basis" in dividends.columns:
+    Without `split_cum_at` (or without a `basis` column) amounts are compared as stored. The
+    returned `cash_amount` is the chosen source's total on that source's OWN stored basis."""
+    warnings: list[str] = []
+    has_basis = "basis" in dividends.columns
+    out_cols = [
+        c for c in ("symbol", "date", "cash_amount", "basis", "source") if c in dividends.columns
+    ]
+    if dividends.is_empty():
+        return dividends.select(out_cols).with_columns(
+            pl.lit(None, dtype=pl.String).alias("total_source")
+        ), warnings
 
-        def comparable(row: dict) -> float:
-            if row["basis"] == "as_paid":
-                return row["cash_amount"] / split_cum_at(row["symbol"], row["date"])
-            return row["cash_amount"]
+    def comparable(row: dict) -> float:
+        if split_cum_at is not None and has_basis and row["basis"] == "as_paid":
+            return row["cash_amount"] / split_cum_at(row["symbol"], row["date"])
+        return row["cash_amount"]
 
-    return _resolve_actions(
-        dividends, "cash_amount", "dividend_disagreement",
-        lambda a, b: abs(round(a, 4) - round(b, 4)) > _DIVIDEND_TOLERANCE + 1e-9,
-        comparable,
-    )
+    ranked = dividends.with_columns(_rank_expr().alias("_rank")).sort(["symbol", "date", "_rank"])
+    kept: list[dict] = []
+    for (sym, ex), grp in ranked.group_by(["symbol", "date"], maintain_order=True):
+        totals: dict[str, dict] = {}  # insertion order = precedence order
+        for row in grp.iter_rows(named=True):
+            t = totals.setdefault(
+                row["source"],
+                {"source": row["source"], "stored": 0.0, "cmp": 0.0,
+                 "basis": row.get("basis") if has_basis else None},
+            )
+            t["stored"] += row["cash_amount"]
+            t["cmp"] += comparable(row)
+        srcs = list(totals.values())
+        win = chosen = srcs[0]
+        for other in srcs[1:]:
+            a, b = win["cmp"], other["cmp"]
+            if not totals_differ_by_a_cent(a, b):
+                continue
+            detail = f"{win['source']}={a:.4f} {other['source']}={b:.4f}"
+            if split_cum_at is not None and has_basis:
+                detail += f" (normalised; stored {win['stored']:.4f}/{other['stored']:.4f})"
+            if totals_materially_differ(a, b):
+                if b > chosen["cmp"]:
+                    chosen = other
+                detail += f" total_source={chosen['source']}"
+            warnings.append(_warn("dividend_disagreement", sym, ex, detail))
+        row_out = {"symbol": sym, "date": ex, "cash_amount": chosen["stored"],
+                   "source": chosen["source"], "total_source": chosen["source"]}
+        if has_basis:
+            row_out["basis"] = chosen["basis"]
+        kept.append(row_out)
+    schema = {c: dividends.schema[c] for c in out_cols}
+    schema["total_source"] = pl.String
+    resolved = pl.DataFrame(kept, schema=schema).select([*out_cols, "total_source"])
+    return resolved.sort(["symbol", "date"]), warnings
 
 
 def apply_splits(bars: pl.DataFrame, splits: pl.DataFrame, as_of_version: int) -> pl.DataFrame:

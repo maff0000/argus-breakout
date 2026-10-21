@@ -10,7 +10,14 @@ with the quoted parquet glob under the configured store directory.
 
 # 3: bar_flags (AMD-0018). 4: store_meta (AMD-0017/AMD-0018 2G, store relocation identity).
 # 5: dividends.basis (AMD-0019 2B); bars/etf_bars price columns DOUBLE on disk (AMD-0019 2C).
-SCHEMA_VERSION = 5
+# 6: dividends.vendor_id, PK (symbol, date, source, vendor_id) (AMD-0027 2A).
+SCHEMA_VERSION = 6
+
+# vendor_id of a source that delivers one summed figure per ex-date (yfinance), and the
+# placeholder the schema-6 migration gives a stored Polygon row whose real `id` is unknown; the
+# next `ingest polygon-actions` replaces it (AMD-0027 2A, WO-0016 8).
+SUMMED_VENDOR_ID = "sum"
+LEGACY_VENDOR_ID = "legacy"
 
 DIVIDEND_BASES = ("as_paid", "split_adjusted")
 
@@ -69,7 +76,8 @@ DDL: dict[str, str] = {
     "dividends": """CREATE TABLE IF NOT EXISTS dividends (
         symbol TEXT, date DATE, cash_amount DOUBLE NOT NULL,
         basis TEXT NOT NULL CHECK (basis IN ('as_paid', 'split_adjusted')), source TEXT,
-        PRIMARY KEY (symbol, date, source))""",
+        vendor_id TEXT NOT NULL,
+        PRIMARY KEY (symbol, date, source, vendor_id))""",
     "bars": _BAR_VIEW.format(name="bars", cols=_BARS_CAST),
     "etf_bars": _BAR_VIEW.format(name="etf_bars", cols=_BARS_CAST),
     "iv_daily": """CREATE TABLE IF NOT EXISTS iv_daily (

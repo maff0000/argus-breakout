@@ -13,7 +13,7 @@ from typing import Any
 import polars as pl
 import structlog
 
-from argus.data.providers.bootstrap import CHUNK_SIZE
+from argus.data.providers.bootstrap import CHUNK_SIZE, DIVIDEND_VENDOR_ID
 from argus.data.store import Store
 from argus.data.tickers import is_valid
 
@@ -152,10 +152,10 @@ def bootstrap_history(
                 .select(
                     "symbol", "date", pl.col("cash_dividend").cast(pl.Float64).alias("cash_amount")
                 )
-                .with_columns(src)
+                .with_columns(src, pl.lit(DIVIDEND_VENDOR_ID).alias("vendor_id"))
             )
             store.upsert("splits", splits, ["symbol", "date", "source"])
-            store.upsert("dividends", dividends, ["symbol", "date", "source"])
+            store.upsert("dividends", dividends, ["symbol", "date", "source", "vendor_id"])
         result.n_symbols += len(got)
         result.n_rows += rows
         detail = f"{label}: {len(got)} symbols, {actions.height} actions"

@@ -110,10 +110,41 @@ def test_next_url_cannot_redirect_key_to_other_host(client):
 def test_dividends(client):
     respx.get(f"{BASE}/v3/reference/dividends").respond(json=_fx("dividends.json"))
     df = client.dividends(date(2026, 1, 1))
-    assert df.columns == ["symbol", "date", "cash_dividend"]
+    assert df.columns == ["symbol", "date", "cash_dividend", "vendor_id"]
     assert df.height == 4
     row = df.filter(df["symbol"] == "MAA").row(0, named=True)
     assert row["date"] == date(2026, 3, 2) and row["cash_dividend"] == 0.25
+
+
+@respx.mock
+def test_vendor_id_carried_from_payload(client):
+    """PGR 2026-01-02: two records, both dividend_type "CD", one ex-date (AMD-0027 2A).
+
+    Fails if the id is not carried, or if dividend_type (identical here) stands in for it."""
+    rec = {"ticker": "PGR", "ex_dividend_date": "2026-01-02", "dividend_type": "CD"}
+    respx.get(f"{BASE}/v3/reference/dividends").respond(
+        json={
+            "status": "OK",
+            "results": [
+                {**rec, "cash_amount": 0.10, "frequency": 4, "id": "id-quarterly"},
+                {**rec, "cash_amount": 13.50, "frequency": 1, "id": "id-special"},
+            ],
+        }
+    )
+    df = client.dividends(date(2026, 1, 1))
+    assert df.height == 2
+    assert sorted(df["vendor_id"].to_list()) == ["id-quarterly", "id-special"]
+    assert sorted(df["cash_dividend"].to_list()) == [0.10, 13.50]
+
+
+@respx.mock
+def test_dividend_record_without_id_fails_loudly(client):
+    respx.get(f"{BASE}/v3/reference/dividends").respond(
+        json={"status": "OK", "results": [
+            {"ticker": "PGR", "ex_dividend_date": "2026-01-02", "cash_amount": 0.10}]}
+    )
+    with pytest.raises(ProviderError, match="without an id"):
+        client.dividends(date(2026, 1, 1))
 
 
 @respx.mock

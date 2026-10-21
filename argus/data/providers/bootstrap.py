@@ -38,6 +38,10 @@ _ACTION_SCHEMA = {
     "cash_dividend": pl.Float64,
 }
 
+# yfinance delivers one summed dividend per ex-date and no record identifier, so its
+# `dividends.vendor_id` is this literal (AMD-0027 2A).
+DIVIDEND_VENDOR_ID = "sum"
+
 log = structlog.get_logger(__name__)
 
 

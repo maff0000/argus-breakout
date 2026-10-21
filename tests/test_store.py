@@ -158,10 +158,11 @@ def test_read_splits_and_dividends(store):
             "date": [date(2024, 1, 5), date(2024, 1, 5), date(2024, 6, 5)],
             "cash_amount": [0.1, 0.2, 0.3],
             "source": ["polygon", "yfinance", "yfinance"],
+            "vendor_id": ["rec-1", "sum", "sum"],
         }
     )
     store.upsert("splits", splits, keys)
-    store.upsert("dividends", divs, keys)
+    store.upsert("dividends", divs, [*keys, "vendor_id"])
     a, b = date(2024, 1, 1), date(2024, 2, 1)
     s_all = store.read_splits(None, a, date(2024, 12, 31))
     assert s_all.height == 3
@@ -171,7 +172,7 @@ def test_read_splits_and_dividends(store):
     assert s_aaa["ratio"].to_list() == [2.0]
     d_all = store.read_dividends(None, a, date(2024, 12, 31))
     assert d_all.height == 3
-    assert set(d_all.columns) == {"symbol", "date", "cash_amount", "basis", "source"}
+    assert set(d_all.columns) == {"symbol", "date", "cash_amount", "basis", "source", "vendor_id"}
     assert store.read_dividends(["BBB"], a, b).height == 1
     with pytest.raises(ValueError):
         store.read_splits(["AAA' OR '1'='1"], a, b)

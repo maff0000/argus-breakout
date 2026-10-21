@@ -15,7 +15,7 @@ from typing import Any
 
 import polars as pl
 
-from argus.data.adjust import resolve_splits
+from argus.data.adjust import resolve_splits, totals_materially_differ
 from argus.data.providers.polygon import PolygonClient
 from argus.data.store import Store
 from argus.data.tickers import is_valid, to_provider
@@ -135,39 +135,15 @@ def _prior_bars(
     return out
 
 
-def dividend_disagreements(
-    store: Store, symbol: str | None = None, on_date: date | None = None
-) -> pl.DataFrame:
-    """Every (symbol, ex_date) with BOTH sources stored; `suspect` = differ by more than 2x.
+def _normalisation(
+    store: Store, pairs: pl.DataFrame
+) -> tuple[dict[tuple[str, date], float], dict[tuple[str, date], tuple[date | None, float | None]]]:
+    """The one split normalisation: (symbol, ex) -> cumulative ratio of splits after the prior bar.
 
-    Polygon's amount ('as_paid') is divided by the split_cum of the last bar before the ex-date
-    (the rule adjust.py's `dividend_adjusted_close` uses: the product of the resolved split
-    ratios dated after that bar, so a split on the ex-date is included) so both amounts are on
-    the price basis; yfinance's ('split_adjusted') is used as stored. `adj_close_err_pct` is
-    |polygon_normalised - yfinance| / prior_close x 100: how far apart the two sources put the
-    adj_close factor at that ex-date as a share of price. It does not say which source is right.
-    """
-    sql = "SELECT symbol, date, cash_amount, source FROM dividends WHERE source IN (?, ?)"
-    params: list = ["polygon", "yfinance"]
-    if symbol is not None:
-        sql += " AND symbol = ?"
-        params.append(symbol)
-    if on_date is not None:
-        sql += " AND date = ?"
-        params.append(on_date)
-    div = store.read(sql + " ORDER BY symbol, date", params)
-    if div.is_empty():
-        return pl.DataFrame(schema=_PAIR_SCHEMA)
-    pg = div.filter(pl.col("source") == "polygon").select(
-        "symbol", "date", pl.col("cash_amount").alias("polygon_stored")
-    )
-    yf = div.filter(pl.col("source") == "yfinance").select(
-        "symbol", "date", pl.col("cash_amount").alias("yfinance_stored")
-    )
-    both = pg.join(yf, on=["symbol", "date"], how="inner").sort("symbol", "date")
-    if both.is_empty():
-        return pl.DataFrame(schema=_PAIR_SCHEMA)
-    syms = both["symbol"].unique().to_list()
+    An 'as_paid' amount (Polygon) divided by it is on the price basis adjust.py uses; a
+    'split_adjusted' amount (yfinance) is used as stored. Also returns each pair's prior bar.
+    Shared by the disagreement report and `attribute_pairs`, so there is one rule, not two."""
+    syms = pairs["symbol"].unique().to_list()
     splits = store.read(
         "SELECT symbol, date, ratio, source FROM splits WHERE symbol IN (SELECT unnest(?))",
         [syms],
@@ -180,17 +156,61 @@ def dividend_disagreements(
     bars = store.read(
         "SELECT symbol, date, close FROM bars WHERE symbol IN (SELECT unnest(?))", [syms]
     )
-    prior = _prior_bars(both, bars)
-    rows = []
-    for rec in both.iter_rows(named=True):
-        sym, ex = rec["symbol"], rec["date"]
-        prior_date, prior_close = prior[(sym, ex)]
+    prior = _prior_bars(pairs, bars)
+    cums: dict[tuple[str, date], float] = {}
+    for sym, ex in pairs.select("symbol", "date").iter_rows():
+        prior_date = prior[(sym, ex)][0]
         after = prior_date if prior_date is not None else ex - timedelta(days=1)
         cum = 1.0
         for sd, r in ratios.get(sym, []):
             if sd > after:
                 cum *= r
-        pg_norm = rec["polygon_stored"] / cum
+        cums[(sym, ex)] = cum
+    return cums, prior
+
+
+def dividend_disagreements(
+    store: Store, symbol: str | None = None, on_date: date | None = None
+) -> pl.DataFrame:
+    """Every (symbol, ex_date) with BOTH sources stored; `suspect` = differ by more than 2x.
+
+    Polygon's amount ('as_paid') is divided by the split_cum of the last bar before the ex-date
+    (the rule adjust.py's `dividend_adjusted_close` uses: the product of the resolved split
+    ratios dated after that bar, so a split on the ex-date is included) so both amounts are on
+    the price basis; yfinance's ('split_adjusted') is used as stored. `adj_close_err_pct` is
+    |polygon_normalised - yfinance| / prior_close x 100: how far apart the two sources put the
+    adj_close factor at that ex-date as a share of price. It does not say which source is right.
+    """
+    sql = (
+        "SELECT symbol, date, sum(cash_amount) AS cash_amount, source FROM dividends "
+        "WHERE source IN (?, ?)"
+    )
+    params: list = ["polygon", "yfinance"]
+    if symbol is not None:
+        sql += " AND symbol = ?"
+        params.append(symbol)
+    if on_date is not None:
+        sql += " AND date = ?"
+        params.append(on_date)
+    # One total per (symbol, date, source): a source may hold several records for an ex-date.
+    div = store.read(sql + " GROUP BY symbol, date, source ORDER BY symbol, date", params)
+    if div.is_empty():
+        return pl.DataFrame(schema=_PAIR_SCHEMA)
+    pg = div.filter(pl.col("source") == "polygon").select(
+        "symbol", "date", pl.col("cash_amount").alias("polygon_stored")
+    )
+    yf = div.filter(pl.col("source") == "yfinance").select(
+        "symbol", "date", pl.col("cash_amount").alias("yfinance_stored")
+    )
+    both = pg.join(yf, on=["symbol", "date"], how="inner").sort("symbol", "date")
+    if both.is_empty():
+        return pl.DataFrame(schema=_PAIR_SCHEMA)
+    cums, prior = _normalisation(store, both)
+    rows = []
+    for rec in both.iter_rows(named=True):
+        sym, ex = rec["symbol"], rec["date"]
+        _prior_date, prior_close = prior[(sym, ex)]
+        pg_norm = rec["polygon_stored"] / cums[(sym, ex)]
         yf_amt = rec["yfinance_stored"]
         lo, hi = sorted((pg_norm, yf_amt))
         ratio = 1.0 if hi <= 0 else (float("inf") if lo <= 0 else hi / lo)
@@ -275,7 +295,7 @@ def same_date_dividend_report(
             [symbol, on_date, "polygon"],
         )
         n_stored = pg_rows.height
-        stored_amount = pg_rows["cash_amount"][0] if n_stored else None
+        stored_amount = pg_rows["cash_amount"].sum() if n_stored else None  # all records
         amounts = _cash_amounts(payload.records)
         n = len(payload.records)
         for i, rec in enumerate(payload.records, start=1):
@@ -304,3 +324,88 @@ def same_date_dividend_report(
              )}
         )
     return pl.DataFrame(rows, schema=REPORT_SCHEMA)
+
+
+ATTRIBUTION_SCHEMA = {
+    "symbol": pl.String,
+    "date": pl.Date,
+    "n_records": pl.Int64,
+    "amounts": pl.List(pl.Float64),
+    "ids": pl.List(pl.String),
+    "raw_sum": pl.Float64,
+    "stored_polygon": pl.Float64,
+    "n_stored_polygon": pl.Int64,
+    "yfinance_stored": pl.Float64,
+    "split_cum": pl.Float64,
+    "polygon_normalised": pl.Float64,
+    "yfinance_normalised": pl.Float64,
+    "verdict": pl.String,
+    "note": pl.String,
+}
+
+
+def _verdict(n: int, polygon_norm: float | None, yf: float | None) -> tuple[str, str]:
+    """collapse | omission | neither for ONE pair, from the raw record count and normalised totals.
+
+    collapse: several records for the ex-date (the store keeps one) and their normalised SUM
+    agrees with yfinance (within the AMD-0027 2D bands, or yfinance has no row).
+    omission: ONE record whose normalised amount is materially smaller than yfinance's total.
+    neither: anything else (no record; one record that matches or exceeds yfinance; several
+    records whose sum still disagrees). 'neither' is a stop, never a residual (WO-0016 AC1)."""
+    if n == 0:
+        return "neither", "no raw record returned"
+    if n > 1:
+        if yf is None or not totals_materially_differ(polygon_norm, yf):
+            return "collapse", f"{n} records for one ex-date; summed total matches the other source"
+        return "neither", f"{n} records but their summed total still differs from yfinance"
+    if yf is None:
+        return "neither", "one record and no yfinance row to compare"
+    if totals_materially_differ(polygon_norm, yf) and polygon_norm < yf:
+        return "omission", "one record, smaller than yfinance's normalised total"
+    return "neither", "one record that does not fall short of yfinance's normalised total"
+
+
+def attribute_pairs(
+    store: Store, client: PolygonClient, pairs: list[tuple[str, date]]
+) -> pl.DataFrame:
+    """Attribute each (symbol, ex_date) to collapse / omission / neither. READ-ONLY.
+
+    One raw Polygon call per pair (the client's rate limiter paces them; `client` may be a mock).
+    The stored `dividends` rows are only read. Raw 'as_paid' amounts are put on the same basis as
+    yfinance's 'split_adjusted' total by the shared `_normalisation` before comparing, so a
+    split ratio is never read as a completeness gap (AMD-0027 2D)."""
+    for sym, _ex in pairs:
+        if not is_valid(sym):
+            raise ValueError(f"invalid symbol: {sym!r}")
+    if not pairs:
+        return pl.DataFrame(schema=ATTRIBUTION_SCHEMA)
+    frame = pl.DataFrame(pairs, schema=["symbol", "date"], orient="row")
+    cums, _prior = _normalisation(store, frame)
+    rows = []
+    for sym, ex in pairs:
+        payload = fetch_raw_dividend_records(client, sym, ex)
+        amounts = _cash_amounts(payload.records)
+        ids = [str(r.get("id")) if isinstance(r, dict) else "" for r in payload.records]
+        stored = store.read(
+            "SELECT source, sum(cash_amount) AS total, count(*) AS n FROM dividends "
+            "WHERE symbol = ? AND date = ? GROUP BY source",
+            [sym, ex],
+        )
+        by_src = {r["source"]: r for r in stored.iter_rows(named=True)}
+        pg, yf = by_src.get("polygon"), by_src.get("yfinance")
+        cum = cums[(sym, ex)]
+        raw_sum = sum(amounts)
+        pg_norm = raw_sum / cum
+        yf_amt = None if yf is None else yf["total"]
+        verdict, note = _verdict(len(payload.records), pg_norm, yf_amt)
+        rows.append(
+            {
+                "symbol": sym, "date": ex, "n_records": len(payload.records),
+                "amounts": amounts, "ids": ids, "raw_sum": raw_sum,
+                "stored_polygon": None if pg is None else pg["total"],
+                "n_stored_polygon": 0 if pg is None else pg["n"],
+                "yfinance_stored": yf_amt, "split_cum": cum, "polygon_normalised": pg_norm,
+                "yfinance_normalised": yf_amt, "verdict": verdict, "note": note,
+            }
+        )
+    return pl.DataFrame(rows, schema=ATTRIBUTION_SCHEMA)

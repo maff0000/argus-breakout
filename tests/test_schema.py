@@ -45,7 +45,9 @@ def test_init_idempotent(tmp_path):
 
 
 def _row(sym, d, val, src, col):
-    return pl.DataFrame({"symbol": [sym], "date": [d], col: [val], "source": [src]})
+    frame = pl.DataFrame({"symbol": [sym], "date": [d], col: [val], "source": [src]})
+    # dividends carry the source's record id (AMD-0027 2A); splits do not
+    return frame.with_columns(pl.lit("rec-1").alias("vendor_id")) if col == "cash_amount" else frame
 
 
 def test_actions_tables_keyed_by_source(tmp_path):
@@ -55,8 +57,9 @@ def test_actions_tables_keyed_by_source(tmp_path):
     keys = ["symbol", "date", "source"]
     store.upsert("splits", _row("AAA", d, 2.0, "polygon", "ratio"), keys)
     store.upsert("splits", _row("AAA", d, 2.0, "yfinance", "ratio"), keys)
-    store.upsert("dividends", _row("AAA", d, 0.25, "polygon", "cash_amount"), keys)
-    store.upsert("dividends", _row("AAA", d, 0.25, "yfinance", "cash_amount"), keys)
+    dkeys = [*keys, "vendor_id"]
+    store.upsert("dividends", _row("AAA", d, 0.25, "polygon", "cash_amount"), dkeys)
+    store.upsert("dividends", _row("AAA", d, 0.25, "yfinance", "cash_amount"), dkeys)
     splits = store.read("SELECT source FROM splits ORDER BY source")
     divs = store.read("SELECT source FROM dividends ORDER BY source")
     assert splits["source"].to_list() == ["polygon", "yfinance"]
@@ -80,17 +83,17 @@ def test_actions_measures_not_null(tmp_path):
             con.execute("INSERT INTO splits VALUES (?, ?, NULL, ?)", ["AAA", date(2024, 1, 2), "x"])
         with pytest.raises(duckdb.ConstraintException):
             con.execute(
-                "INSERT INTO dividends VALUES (?, ?, NULL, 'as_paid', ?)",
-                ["AAA", date(2024, 1, 2), "x"],
+                "INSERT INTO dividends VALUES (?, ?, NULL, 'as_paid', ?, ?)",
+                ["AAA", date(2024, 1, 2), "x", "rec-1"],
             )
     finally:
         con.close()
 
 
-def test_schema_version_is_5(tmp_path):
+def test_schema_version_is_6(tmp_path):
     store = Store(tmp_path / "store")
     store.init_schema()
     store.init_schema()
-    assert SCHEMA_VERSION == 5
+    assert SCHEMA_VERSION == 6
     sv = store.read("SELECT version FROM schema_version")
-    assert sv["version"].to_list() == [5]
+    assert sv["version"].to_list() == [6]

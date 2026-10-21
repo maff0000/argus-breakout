@@ -9,6 +9,7 @@ import structlog
 
 from argus.data.providers.base import ProviderError
 from argus.data.providers.polygon import PolygonClient
+from argus.data.schema import LEGACY_VENDOR_ID
 from argus.data.store import Store
 from argus.data.validate import validate_day
 
@@ -209,11 +210,47 @@ def revalidate_range(store: Store, start: date, end: date) -> list[IngestResult]
     return results
 
 
+def _supersede_legacy_dividends(store: Store) -> int:
+    """Delete `legacy` Polygon dividend rows for every (symbol, date) that now has real-id rows.
+
+    The schema-6 migration backfills `vendor_id = 'legacy'` for Polygon rows whose `id` was never
+    stored. Left beside the real records they would be counted a second time by the ex-date sum,
+    so a real record for a (symbol, date) REPLACES that date's placeholder (WO-0016 8). A
+    placeholder for a date Polygon no longer returns is left alone. Returns rows deleted."""
+    con = store.connect()
+    try:
+        con.execute("BEGIN")
+        try:
+            n = con.execute(
+                "SELECT count(*) FROM dividends d WHERE d.source = ? AND d.vendor_id = ? "
+                "AND EXISTS (SELECT 1 FROM dividends r WHERE r.symbol = d.symbol "
+                "AND r.date = d.date AND r.source = d.source AND r.vendor_id <> ?)",
+                [SOURCE, LEGACY_VENDOR_ID, LEGACY_VENDOR_ID],
+            ).fetchone()[0]
+            con.execute(
+                "DELETE FROM dividends WHERE source = ? AND vendor_id = ? "
+                "AND EXISTS (SELECT 1 FROM dividends r WHERE r.symbol = dividends.symbol "
+                "AND r.date = dividends.date AND r.source = dividends.source "
+                "AND r.vendor_id <> ?)",
+                [SOURCE, LEGACY_VENDOR_ID, LEGACY_VENDOR_ID],
+            )
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+        return int(n)
+    finally:
+        con.close()
+
+
 def ingest_polygon_actions(store: Store, client: PolygonClient, since: date) -> int:
     """Upsert splits -> `splits` and dividends -> `dividends` (symbols in `symbols` only).
 
-    Two tables keyed (symbol, date, source) so a same-date split and dividend both persist
-    (AMD-0012). Returns the total rows written across both tables.
+    `splits` is keyed (symbol, date, source) so a same-date split and dividend both persist
+    (AMD-0012). `dividends` is keyed (symbol, date, source, vendor_id): every Polygon record of
+    an ex-date persists, a quarterly beside a special (AMD-0027 2A). Real-id rows then supersede
+    the migration's `legacy` placeholder for their (symbol, date). Returns the total rows written
+    across both tables.
     """
     known = store.read("SELECT symbol FROM symbols")["symbol"].to_list()
     keys = ["symbol", "date", "source"]
@@ -228,12 +265,19 @@ def ingest_polygon_actions(store: Store, client: PolygonClient, since: date) -> 
     divs = (
         client.dividends(since)
         .filter(pl.col("symbol").is_in(known))
-        .unique(subset=["symbol", "date"], keep="last", maintain_order=True)
+        .unique(subset=["symbol", "date", "vendor_id"], keep="last", maintain_order=True)
         .rename({"cash_dividend": "cash_amount"})
         .with_columns(pl.lit(SOURCE).alias("source"))
-        .select("symbol", "date", "cash_amount", "source")
+        .select("symbol", "date", "cash_amount", "source", "vendor_id")
     )
     n_splits = store.upsert("splits", splits, keys)
-    n_divs = store.upsert("dividends", divs, keys)
-    log.info("ingest_polygon_actions", since=since.isoformat(), splits=n_splits, dividends=n_divs)
+    n_divs = store.upsert("dividends", divs, [*keys, "vendor_id"])
+    superseded = _supersede_legacy_dividends(store)
+    log.info(
+        "ingest_polygon_actions",
+        since=since.isoformat(),
+        splits=n_splits,
+        dividends=n_divs,
+        legacy_superseded=superseded,
+    )
     return n_splits + n_divs

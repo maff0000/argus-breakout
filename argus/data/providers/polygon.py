@@ -42,7 +42,12 @@ _BAR_SCHEMA = {
     "transactions": pl.Int64,
 }
 _SPLIT_SCHEMA = {"symbol": pl.String, "date": pl.Date, "split_ratio": pl.Float64}
-_DIV_SCHEMA = {"symbol": pl.String, "date": pl.Date, "cash_dividend": pl.Float64}
+_DIV_SCHEMA = {
+    "symbol": pl.String,
+    "date": pl.Date,
+    "cash_dividend": pl.Float64,
+    "vendor_id": pl.String,
+}
 
 log = structlog.get_logger()
 
@@ -232,7 +237,17 @@ class PolygonClient:
                 amount = float(r["cash_amount"])
             except (KeyError, TypeError, ValueError):
                 continue
+            vendor_id = r.get("id")
             if sym is None or d is None:
                 continue
-            out.append({"symbol": sym, "date": d, "cash_dividend": amount})
+            if not isinstance(vendor_id, str) or not vendor_id:
+                # `id` is on every record (WO-0015 evidence). A record without one cannot be keyed,
+                # and dropping or merging it would silently change the ex-date total (AMD-0027
+                # 2A): fail loudly instead.
+                raise ProviderError(
+                    f"polygon dividend record without an id: {sym} {d.isoformat()}"
+                )
+            out.append(
+                {"symbol": sym, "date": d, "cash_dividend": amount, "vendor_id": vendor_id}
+            )
         return pl.DataFrame(out, schema=_DIV_SCHEMA)

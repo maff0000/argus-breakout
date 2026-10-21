@@ -5,9 +5,12 @@ import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import polars as pl
 import pytest
+import respx
 import structlog
+from pydantic import SecretStr
 from structlog.testing import capture_logs
 from typer.testing import CliRunner
 
@@ -23,7 +26,10 @@ from argus.data.adjust import (
     select_source,
     source_disagreements,
 )
+from argus.data.ingest_polygon import ingest_polygon_actions
+from argus.data.providers.polygon import PolygonClient
 from argus.data.store import Store, stamp_dividend_basis
+from argus.diagnostics.dividends import attribute_pairs
 
 FIX = Path(__file__).parent / "fixtures" / "adjust"
 FAR = date(2100, 1, 1)
@@ -104,10 +110,18 @@ def put_splits(store, rows):
 
 
 def put_dividends(store, rows):
+    """Rows are (symbol, date, amount, source) or (..., source, vendor_id); a row with no id gets
+    'sum' for yfinance and a distinct 'rec-<n>' otherwise (one record per row)."""
+    full = [
+        r if len(r) == 5 else (*r, "sum" if r[3] == "yfinance" else f"rec-{n}")
+        for n, r in enumerate(rows)
+    ]
     store.upsert(
         "dividends",
-        pl.DataFrame(rows, schema=["symbol", "date", "cash_amount", "source"], orient="row"),
-        ["symbol", "date", "source"],
+        pl.DataFrame(
+            full, schema=["symbol", "date", "cash_amount", "source", "vendor_id"], orient="row"
+        ),
+        ["symbol", "date", "source", "vendor_id"],
     )
 
 
@@ -815,10 +829,10 @@ def test_dividend_disagreement_normalises_basis(store):
     found = [w for w in report.warnings if w.startswith("dividend_disagreement")]
     assert [w.split()[1] for w in found] == ["DIFF"]  # SAME raises none
     assert "polygon=0.5000 yfinance=0.5200" in found[0]  # both amounts, on one basis
-    # the winning (Polygon) amount is the one applied
-    assert bars_of(store, "SAME")["adj_close"].to_list() == pytest.approx(
-        bars_of(store, "DIFF")["adj_close"].to_list()
-    )
+    # AMD-0027 2D: 0.52 is more than a cent and 2% above 0.50, so the LARGER total is applied
+    assert "total_source=yfinance" in found[0]
+    same, diff = bars_of(store, "SAME")["adj_close"], bars_of(store, "DIFF")["adj_close"]
+    assert diff[0] < same[0]
 
 
 def test_split_on_ex_date_is_divided_out(store):
@@ -968,7 +982,7 @@ def _legacy_store(tmp_path):
         "INSERT INTO dividends VALUES ('AAA', ?, 0.5, 'polygon'), ('AAA', ?, 0.25, 'yfinance')",
         [days[2], days[2]],
     )
-    con.execute("DELETE FROM schema_version WHERE version = 5")
+    con.execute("DELETE FROM schema_version WHERE version >= 5")
     con.close()
     return s
 
@@ -978,15 +992,18 @@ def test_migrate_store_is_in_place_idempotent_and_leaves_bars_raw_alone(tmp_path
     raw_before = _checksum(s, "bars_raw")
     rows = {t: (b, a) for t, b, a in s.migrate()}
     assert rows["dividends"] == (2, 2) and rows["bars_raw"] == (12, 12) and rows["bars"] == (6, 6)
-    got = s.read("SELECT source, basis FROM dividends ORDER BY source")
-    assert got.rows() == [("polygon", "as_paid"), ("yfinance", "split_adjusted")]
+    got = s.read("SELECT source, basis, vendor_id FROM dividends ORDER BY source")
+    assert got.rows() == [
+        ("polygon", "as_paid", "legacy"),  # placeholder: the real id needs a re-ingest
+        ("yfinance", "split_adjusted", "sum"),
+    ]
     on_disk = pl.read_parquet(s.parquet_dir / "bars" / "symbol=AAA" / "part.parquet")
     assert set(on_disk.select(pl.exclude("symbol", "date", "adj_version")).schema.values()) == {
         pl.Float64
     }
     assert _checksum(s, "bars_raw") == raw_before  # CI-9: bars_raw is byte-identical
     versions = s.read("SELECT version FROM schema_version ORDER BY version")["version"].to_list()
-    assert versions[-1] == 5
+    assert versions[-1] == 6
     # a second run changes nothing
     bars_sum, div_rows = _checksum(s, "bars"), s.read("SELECT * FROM dividends").rows()
     again = {t: (b, a) for t, b, a in s.migrate()}
@@ -1018,7 +1035,7 @@ def test_cli_migrate_store(clean_env, tmp_path):
     clean_env.setenv("ARGUS_STORE_DIR", str(tmp_path / "store"))
     res = CliRunner().invoke(app, ["migrate-store"])
     assert res.exit_code == 0, res.output
-    assert "schema 5" in res.output and "dividends: 2 -> 2" in res.output
+    assert "schema 6" in res.output and "dividends: 2 -> 2" in res.output
     assert "bars_raw: 12 -> 12" in res.output
     assert s.read("SELECT count(*) AS n FROM dividends WHERE basis IS NULL")["n"][0] == 0
 
@@ -1027,3 +1044,285 @@ def test_store_has_a_single_logging_channel():
     import argus.data.store as store_module
 
     assert not hasattr(store_module, "_stdlog")  # AMD-0019 2H: structlog (redacted) only
+
+
+# ------------------------------------------------------------------------------ WO-0016
+def _flat_bars(store, sym, n=8, close=100.0, source="polygon"):
+    days = weekdays(date(2026, 3, 2), n)
+    store.write_bars_raw(raw_rows(sym, days, close, source, ingested=datetime(2026, 3, 20, 6, 0)))
+    return days
+
+
+def _ingest_polygon_dividends(store, records):
+    """Run the real ingest path (client -> ingest_polygon_actions) over a mocked payload."""
+    respx.get("https://api.polygon.io/v3/reference/splits").respond(
+        json={"status": "OK", "results": []}
+    )
+    respx.get("https://api.polygon.io/v3/reference/dividends").respond(
+        json={"status": "OK", "results": records}
+    )
+    client = PolygonClient(SecretStr("unit-test-dummy"), calls_per_minute=6000)
+    try:
+        return ingest_polygon_actions(store, client, date(2026, 1, 1))
+    finally:
+        client.close()
+
+
+@respx.mock
+def test_two_records_one_ex_date_both_persist_and_sum(store):
+    """PGR: a quarterly 0.10 and a special 13.50 on one ex-date, BOTH dividend_type "CD" (so a
+    key on the type collapses them). Both rows persist and the adjustment uses their SUM, 13.60
+    (AMD-0027 2A, 2B). Prior close 100 -> factor 1 - 0.136."""
+    days = _flat_bars(store, "PGR")
+    ex = days[4]
+    _seed_symbols(store, "PGR")
+    rec = {"ticker": "PGR", "ex_dividend_date": ex.isoformat(), "dividend_type": "CD"}
+    _ingest_polygon_dividends(store, [
+        {**rec, "cash_amount": 0.10, "frequency": 4, "id": "id-quarterly"},
+        {**rec, "cash_amount": 13.50, "frequency": 1, "id": "id-special"},
+    ])
+    assert store.read("SELECT count(*) AS n FROM dividends")["n"][0] == 2
+    materialise(store, None)
+    adj = bars_of(store, "PGR")["adj_close"].to_list()
+    assert adj[:4] == pytest.approx([100.0 * (1 - 13.60 / 100.0)] * 4, abs=1e-9)
+    assert adj[4:] == pytest.approx([100.0] * 4, abs=1e-9)
+
+
+@respx.mock
+def test_same_amount_twice_does_not_collapse(store):
+    """Two records with the SAME cash_amount and different ids both persist: a key that uses the
+    amount (instead of the id) would merge them."""
+    days = _flat_bars(store, "TWN")
+    ex = days[4]
+    _seed_symbols(store, "TWN")
+    rec = {"ticker": "TWN", "ex_dividend_date": ex.isoformat(), "dividend_type": "CD",
+           "cash_amount": 0.50}
+    _ingest_polygon_dividends(store, [{**rec, "id": "id-one"}, {**rec, "id": "id-two"}])
+    assert store.read("SELECT count(*) AS n FROM dividends")["n"][0] == 2
+    materialise(store, None)
+    assert bars_of(store, "TWN")["adj_close"].to_list()[:4] == pytest.approx(
+        [99.0] * 4, abs=1e-9  # 1 - 1.00/100, not 1 - 0.50/100
+    )
+
+
+def test_larger_normalised_total_wins_and_warns(store):
+    """FCX: Polygon returns one 0.075 record, yfinance sums 0.15 (AMD-0027 2D)."""
+    days = _flat_bars(store, "FCX")
+    ex = days[4]
+    put_dividends(store, [("FCX", ex, 0.075, "polygon"), ("FCX", ex, 0.15, "yfinance")])
+    report = materialise(store, None)
+    found = [w for w in report.warnings if w.startswith("dividend_disagreement")]
+    assert len(found) == 1
+    assert "polygon=0.0750 yfinance=0.1500" in found[0] and "total_source=yfinance" in found[0]
+    assert bars_of(store, "FCX")["adj_close"].to_list()[:4] == pytest.approx(
+        [100.0 * (1 - 0.15 / 100.0)] * 4, abs=1e-9
+    )
+    divs = store.read_dividends(["FCX"], LONG_AGO, FAR)
+    kept, _ = resolve_dividends(divs)
+    assert kept["total_source"].to_list() == ["yfinance"]
+    assert kept["cash_amount"].to_list() == [0.15]
+
+
+def test_basis_difference_is_not_an_omission(store):
+    """The same economic dividend: 1.00 as paid (Polygon) and 0.50 split-adjusted (yfinance)
+    across a 2:1 split dated after the ex-date. Compared raw it reads as a 2x gap; normalised it
+    is none. No warning, and Polygon's total stands."""
+    days = weekdays(date(2026, 3, 2), 8)
+    store.write_bars_raw(
+        raw_rows("BAS2", days, 100.0, "polygon", ingested=datetime(2026, 3, 20, 6, 0))
+    )
+    put_splits(store, [("BAS2", date(2026, 4, 1), 2.0, "polygon")])
+    put_dividends(store, [("BAS2", days[4], 1.00, "polygon"), ("BAS2", days[4], 0.50, "yfinance")])
+    report = materialise(store, None)
+    assert [w for w in report.warnings if w.startswith("dividend_disagreement")] == []
+    cum = lambda sym, ex: 2.0  # noqa: E731 - the one 2:1 split after the ex-date
+    kept, found = resolve_dividends(
+        store.read_dividends(["BAS2"], LONG_AGO, FAR), cum
+    )
+    assert found == [] and kept["total_source"].to_list() == ["polygon"]
+    assert kept["cash_amount"].to_list() == [1.00]
+
+
+def test_sub_threshold_difference_changes_nothing(store):
+    """Both bands of the threshold (one cent AND 2%): each alone leaves precedence untouched."""
+    ex = date(2026, 3, 5)
+
+    def resolved(poly, yf):
+        rows = [("T", ex, poly, "polygon", "p1"), ("T", ex, yf, "yfinance", "sum")]
+        df = stamp_dividend_basis(
+            pl.DataFrame(rows, schema=["symbol", "date", "cash_amount", "source", "vendor_id"],
+                         orient="row")
+        )
+        return resolve_dividends(df)
+
+    # half a cent, 1%: nothing, Polygon stands
+    kept, found = resolved(0.50, 0.505)
+    assert found == [] and kept["total_source"].to_list() == ["polygon"]
+    assert kept["cash_amount"].to_list() == [0.50]
+    # under a cent but far over 2%: still nothing
+    kept, found = resolved(0.10, 0.108)
+    assert found == [] and kept["total_source"].to_list() == ["polygon"]
+    # over a cent but within 2%: warned (as before), precedence untouched
+    kept, found = resolved(1.00, 1.015)
+    assert len(found) == 1 and "total_source" not in found[0]
+    assert kept["total_source"].to_list() == ["polygon"] and kept["cash_amount"].to_list() == [1.0]
+    # over both: the larger total
+    kept, found = resolved(1.00, 1.05)
+    assert kept["total_source"].to_list() == ["yfinance"] and "total_source=yfinance" in found[0]
+
+
+def test_polygon_larger_total_is_kept_without_switching(store):
+    """§2D takes the larger total; a vendor-invented yfinance extra is not what it protects
+    against, but a LARGER Polygon total (the usual precedence winner) simply stands."""
+    ex = date(2026, 3, 5)
+    df = stamp_dividend_basis(
+        pl.DataFrame(
+            [("T", ex, 0.20, "polygon", "p1"), ("T", ex, 0.10, "yfinance", "sum")],
+            schema=["symbol", "date", "cash_amount", "source", "vendor_id"], orient="row",
+        )
+    )
+    kept, found = resolve_dividends(df)
+    assert kept["total_source"].to_list() == ["polygon"] and kept["cash_amount"].to_list() == [0.2]
+    assert len(found) == 1
+
+
+# ---- migration to schema 6 and the legacy placeholder
+def _schema5_store(tmp_path):
+    import duckdb
+
+    s = make_store(tmp_path)
+    days = weekdays(date(2026, 3, 2), 6)
+    s.write_bars_raw(raw_rows("AAA", days, 12.5, "polygon"))
+    con = duckdb.connect(str(s.db_path))
+    con.execute("DROP TABLE dividends")
+    con.execute(
+        "CREATE TABLE dividends (symbol TEXT, date DATE, cash_amount DOUBLE NOT NULL, "
+        "basis TEXT NOT NULL CHECK (basis IN ('as_paid', 'split_adjusted')), source TEXT, "
+        "PRIMARY KEY (symbol, date, source))"
+    )
+    con.execute(
+        "INSERT INTO dividends VALUES ('AAA', ?, 0.5, 'as_paid', 'polygon'), "
+        "('AAA', ?, 0.25, 'split_adjusted', 'yfinance')",
+        [days[2], days[2]],
+    )
+    con.execute("DELETE FROM schema_version WHERE version = 6")
+    con.close()
+    return s
+
+
+def test_migration_to_schema_6_is_idempotent_and_loses_no_rows(tmp_path):
+    s = _schema5_store(tmp_path)
+    raw_before = _checksum(s, "bars_raw")
+    rows = {t: (b, a) for t, b, a in s.migrate()}
+    assert rows["dividends"] == (2, 2) and rows["bars_raw"] == (6, 6)
+    got = s.read("SELECT source, vendor_id, cash_amount FROM dividends ORDER BY source")
+    assert got.rows() == [("polygon", "legacy", 0.5), ("yfinance", "sum", 0.25)]
+    assert s.read("SELECT max(version) AS v FROM schema_version")["v"][0] == 6
+    again = {t: (b, a) for t, b, a in s.migrate()}
+    assert again == {t: (after, after) for t, (_b, after) in rows.items()}
+    assert s.read("SELECT source, vendor_id FROM dividends ORDER BY source").rows() == [
+        ("polygon", "legacy"), ("yfinance", "sum")
+    ]
+    assert _checksum(s, "bars_raw") == raw_before  # CI-9
+
+
+def test_cli_migrate_store_names_the_legacy_placeholder(clean_env, tmp_path):
+    _schema5_store(tmp_path)
+    clean_env.setenv("ARGUS_STORE_DIR", str(tmp_path / "store"))
+    res = CliRunner().invoke(app, ["migrate-store"])
+    assert res.exit_code == 0, res.output
+    assert "dividends: 2 -> 2" in res.output
+    assert "1 polygon dividend rows hold the placeholder vendor_id 'legacy'" in res.output
+
+
+def _seed_symbols(store, *syms):
+    store.upsert(
+        "symbols",
+        pl.DataFrame({"symbol": list(syms), "active": [True] * len(syms)}),
+        ["symbol"],
+    )
+
+
+@respx.mock
+def test_real_id_rows_replace_the_legacy_placeholder_not_duplicate_it(tmp_path):
+    """After the migration a Polygon row is `legacy`. Re-ingesting the date's real records must
+    REPLACE it: left beside them, the ex-date sum would count the dividend twice."""
+    s = make_store(tmp_path)
+    _seed_symbols(s, "PGR", "OTH")
+    ex, other = date(2026, 1, 2), date(2026, 2, 2)
+    s.upsert("dividends", pl.DataFrame(
+        {"symbol": ["PGR", "OTH"], "date": [ex, other], "cash_amount": [0.10, 0.30],
+         "source": ["polygon", "polygon"], "vendor_id": ["legacy", "legacy"]}),
+        ["symbol", "date", "source", "vendor_id"])
+    respx.get("https://api.polygon.io/v3/reference/splits").respond(
+        json={"status": "OK", "results": []})
+    respx.get("https://api.polygon.io/v3/reference/dividends").respond(json={"status": "OK",
+        "results": [
+            {"ticker": "PGR", "ex_dividend_date": ex.isoformat(), "cash_amount": 0.10,
+             "dividend_type": "CD", "id": "id-q"},
+            {"ticker": "PGR", "ex_dividend_date": ex.isoformat(), "cash_amount": 13.50,
+             "dividend_type": "CD", "id": "id-s"},
+        ]})
+    client = PolygonClient(SecretStr("unit-test-dummy"), calls_per_minute=6000)
+    try:
+        ingest_polygon_actions(s, client, date(2026, 1, 1))
+        ingest_polygon_actions(s, client, date(2026, 1, 1))  # idempotent
+    finally:
+        client.close()
+    got = s.read("SELECT symbol, vendor_id, cash_amount FROM dividends "
+                 "ORDER BY symbol, vendor_id").rows()
+    assert got == [("OTH", "legacy", 0.30), ("PGR", "id-q", 0.10), ("PGR", "id-s", 13.50)]
+
+
+# ---- attribute_pairs (AC1): read-only, fed a mock client
+def _payload(*recs):
+    return {"status": "OK", "results": [
+        {"dividend_type": "CD", "frequency": 4, **r} for r in recs]}
+
+
+@respx.mock
+def test_attribute_pairs_collapse_omission_neither_and_basis_trap(tmp_path):
+    s = make_store(tmp_path)
+    ex = date(2026, 1, 2)
+    put_dividends(s, [
+        ("PGR", ex, 0.10, "polygon", "legacy"), ("PGR", ex, 13.60, "yfinance"),
+        ("FCX", ex, 0.075, "polygon", "id-f"), ("FCX", ex, 0.15, "yfinance"),
+        ("SAM", ex, 0.20, "polygon", "id-s"), ("SAM", ex, 0.20, "yfinance"),
+        ("SPL", ex, 1.00, "polygon", "id-p"), ("SPL", ex, 0.50, "yfinance"),  # 2:1 after ex
+    ])
+    put_splits(s, [("SPL", date(2026, 4, 1), 2.0, "polygon")])
+    by_ticker = {
+        "PGR": _payload(
+            {"ticker": "PGR", "ex_dividend_date": ex.isoformat(), "cash_amount": 0.10, "id": "a"},
+            {"ticker": "PGR", "ex_dividend_date": ex.isoformat(), "cash_amount": 13.50, "id": "b"},
+        ),
+        "FCX": _payload(
+            {"ticker": "FCX", "ex_dividend_date": ex.isoformat(), "cash_amount": 0.075, "id": "c"}
+        ),
+        "SAM": _payload(
+            {"ticker": "SAM", "ex_dividend_date": ex.isoformat(), "cash_amount": 0.20, "id": "d"}
+        ),
+        "SPL": _payload(
+            {"ticker": "SPL", "ex_dividend_date": ex.isoformat(), "cash_amount": 1.00, "id": "e"}
+        ),
+    }
+    route = respx.get("https://api.polygon.io/v3/reference/dividends").mock(
+        side_effect=lambda req: httpx.Response(200, json=by_ticker[req.url.params["ticker"]])
+    )
+    before = (s.read("SELECT * FROM dividends ORDER BY ALL").rows(),
+              s.read("SELECT * FROM splits ORDER BY ALL").rows())
+    client = PolygonClient(SecretStr("unit-test-dummy"), calls_per_minute=6000)
+    try:
+        out = attribute_pairs(s, client, [(t, ex) for t in by_ticker])
+    finally:
+        client.close()
+    assert route.call_count == 4
+    verdict = dict(zip(out["symbol"], out["verdict"], strict=True))
+    # SPL: 1.00 as paid across a 2:1 split is 0.50 == yfinance's 0.50, not an omission
+    assert verdict == {"PGR": "collapse", "FCX": "omission", "SAM": "neither", "SPL": "neither"}
+    pgr = out.filter(pl.col("symbol") == "PGR").row(0, named=True)
+    assert pgr["n_records"] == 2 and pgr["ids"] == ["a", "b"] and pgr["amounts"] == [0.10, 13.50]
+    assert out.filter(pl.col("symbol") == "SPL")["polygon_normalised"][0] == pytest.approx(0.50)
+    after = (s.read("SELECT * FROM dividends ORDER BY ALL").rows(),
+             s.read("SELECT * FROM splits ORDER BY ALL").rows())
+    assert before == after  # read-only
