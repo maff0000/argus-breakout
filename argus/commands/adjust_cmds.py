@@ -34,9 +34,10 @@ def materialise_cmd(
         f"symbols={report.n_symbols} rows={report.n_rows} readjusted={report.n_readjusted} "
         f"warnings={len(report.warnings)}"
     )
+    excluded = report.n_symbol_days_flag_excluded
     typer.echo(
         f"{report.n_days_quarantined_skipped} quarantined days not published, "
-        f"{report.n_symbol_days_flag_excluded} flagged symbol-days excluded"
+        f"flagged symbol-days excluded: {'not computed' if excluded is None else excluded}"
     )
     for line in report.warnings[:_SHOWN]:
         typer.echo(f"warning: {line}", err=True)

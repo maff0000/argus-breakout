@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from argus.cli import app
 from argus.data.adjust import (
+    MaterialiseReport,
     apply_splits,
     dividend_adjusted_close,
     equal_weight_aggregate,
@@ -75,6 +76,12 @@ def weekdays(start: date, n: int) -> list[date]:
             out.append(d)
         d += timedelta(days=1)
     return out
+
+
+def calendar_rows(start: date, n: int) -> pl.DataFrame:
+    """A continuously trading symbol with no membership: the market calendar bars_raw implies
+    (AMD-0021 2B measures a gap in trading days present in bars_raw)."""
+    return raw_rows("CAL", weekdays(start, n), 10.0)
 
 
 def put_membership(store, sym, start, end):
@@ -383,9 +390,10 @@ def _reassigned(store):
     """OLD delisted on 2026-01-06; its ticker was reassigned to a different company afterwards."""
     put_membership(store, "OLD", date(2020, 1, 1), date(2026, 1, 6))
     first = weekdays(date(2026, 1, 2), 3)  # 01-02, 01-05, 01-06: the member's own life
-    later = weekdays(date(2026, 2, 2), 15)  # an unrelated company under the same ticker
+    later = weekdays(date(2026, 3, 2), 15)  # an unrelated company under the same ticker
     store.write_bars_raw(
-        pl.concat([raw_rows("OLD", first, 50.0), raw_rows("OLD", later, 5.0, volume=7.0)])
+        pl.concat([raw_rows("OLD", first, 50.0), raw_rows("OLD", later, 5.0, volume=7.0),
+                   calendar_rows(date(2026, 1, 2), 70)])
     )
     return first, later
 
@@ -405,27 +413,86 @@ def test_reassigned_ticker_is_not_concatenated(store):
     assert store.read("SELECT count(*) AS n FROM bars_raw WHERE symbol = 'OLD'")["n"][0] == 18
 
 
+def test_reassigned_ticker_tail_is_excluded_and_warned(store):
+    first, later = _reassigned(store)
+    cal = weekdays(date(2026, 1, 2), 70)
+    gap = len([d for d in cal if first[-1] < d < later[0]])
+    assert gap > 20
+    report = materialise(store, None)
+    assert bars_of(store, "OLD")["date"].to_list() == first  # the tail is gone
+    warned = [w for w in report.warnings if w.startswith("bars_after_final_end_without_continuity")]
+    assert len(warned) == 1 and warned[0].split()[1] == "OLD"  # named
+    assert f"gap_trading_days={gap}" in warned[0]  # with the measured gap
+    assert report.n_bars_after_final_end_without_continuity == 15
+
+
+def test_same_company_tail_is_retained(store):
+    """A member that left the index but kept trading: the 118,027-bar defect, pinned."""
+    put_membership(store, "STAY", date(2020, 1, 1), date(2026, 1, 6))
+    days = weekdays(date(2025, 12, 1), 60)  # continuous straight through the end_date
+    store.write_bars_raw(raw_rows("STAY", days, 20.0))
+    report = materialise(store, None)
+    assert bars_of(store, "STAY")["date"].to_list() == days  # post-exit bars present
+    assert not [w for w in report.warnings if w.startswith("bars_after_final_end")]
+    assert report.n_bars_after_final_end_without_continuity == 0
+
+
+def _gap_store(tmp_path, gap):
+    """GAP trades 3 days, then is absent for exactly `gap` market days, then 5 more."""
+    s = make_store(tmp_path)
+    cal = weekdays(date(2026, 1, 2), 3 + gap + 5)
+    put_membership(s, "GAP", date(2020, 1, 1), cal[2])
+    s.write_bars_raw(
+        pl.concat([raw_rows("GAP", cal[:3] + cal[3 + gap :], 30.0),
+                   raw_rows("CAL", cal, 10.0)])
+    )
+    return s
+
+
+def test_gap_threshold_boundary(tmp_path):
+    for gap, retained in ((20, True), (21, False)):
+        s = _gap_store(tmp_path / f"g{gap}", gap)
+        report = materialise(s, None)
+        warned = [w for w in report.warnings if w.startswith("bars_after_final_end")]
+        assert bars_of(s, "GAP").height == (8 if retained else 3), gap
+        assert bool(warned) is (not retained), gap
+        if warned:
+            assert f"gap_trading_days={gap}" in warned[0]
+
+
+def test_holiday_run_is_not_a_gap(tmp_path):
+    """Gap is counted in market days present in bars_raw, not calendar days."""
+    s = make_store(tmp_path)
+    cal = weekdays(date(2026, 1, 2), 30)
+    shut = set(cal[5:25])  # the market is closed for 20 weekdays: nobody has bars for them
+    cal = [d for d in cal if d not in shut]
+    put_membership(s, "HOL", date(2020, 1, 1), cal[2])
+    s.write_bars_raw(raw_rows("HOL", cal, 30.0))
+    materialise(s, None)
+    assert bars_of(s, "HOL").height == len(cal)
+
+
+def test_rename_continuity_suppresses_the_warning(tmp_path):
+    s = make_store(tmp_path, renames=[("OLD", "NEW")])
+    put_membership(s, "OLD", date(2020, 1, 1), date(2026, 1, 6))
+    put_membership(s, "NEW", date(2026, 1, 7), None)
+    first = weekdays(date(2026, 1, 2), 3)
+    later = weekdays(date(2026, 3, 2), 15)  # a 38-day gap: reassigned, but for the mapping
+    s.write_bars_raw(
+        pl.concat([raw_rows("OLD", first, 50.0), raw_rows("OLD", later, 50.0),
+                   calendar_rows(date(2026, 1, 2), 70)])
+    )
+    report = materialise(s, None)
+    assert bars_of(s, "OLD")["date"].to_list() == first + later
+    assert not [w for w in report.warnings if w.startswith("bars_after_final_end")]
+    assert report.n_bars_after_final_end_without_continuity == 0
+
+
 def test_actions_after_final_end_are_not_applied(store):
     _reassigned(store)
-    put_splits(store, [("OLD", date(2026, 2, 10), 4.0, "polygon")])  # the successor's split
+    put_splits(store, [("OLD", date(2026, 3, 10), 4.0, "polygon")])  # the successor's split
     materialise(store, None)
     assert bars_of(store, "OLD")["close"].to_list() == [50.0] * 3
-
-
-def test_outside_warning_needs_more_than_ten_days(tmp_path):
-    for n_after, warns in ((10, False), (11, True)):
-        s = make_store(tmp_path / f"n{n_after}")
-        put_membership(s, "OLD", date(2020, 1, 1), date(2026, 1, 6))
-        later = weekdays(date(2026, 2, 2), n_after)
-        s.write_bars_raw(
-            pl.concat([raw_rows("OLD", weekdays(date(2026, 1, 2), 3), 50.0),
-                       raw_rows("OLD", later, 5.0)])
-        )
-        report = materialise(s, None)
-        kind = "bars_after_final_end_without_continuity"
-        assert any(w.startswith(kind) for w in report.warnings) is warns
-        assert report.n_bars_after_final_end_without_continuity == n_after  # counted either way
-        assert bars_of(s, "OLD").height == 3  # excluded either way
 
 
 def test_rename_chain_stays_continuous(tmp_path):
@@ -511,7 +578,7 @@ def test_quarantined_day_is_not_published(store):
     report = materialise(store, None)
     assert SEAM_DAYS[2] not in bars_of(store, "QQQ1")["date"].to_list()
     assert bars_of(store, "QQQ1").height == 5
-    assert report.n_days_quarantined_skipped == 1 and report.n_symbol_days_flag_excluded == 0
+    assert report.n_days_quarantined_skipped == 1 and report.n_symbol_days_flag_excluded is None
     # bars_raw still holds the quarantined day (CI-9)
     assert store.read("SELECT count(*) AS n FROM bars_raw")["n"][0] == 6
 
@@ -541,7 +608,7 @@ def test_flagged_symbol_day_is_published(store):
         "ON f.symbol = b.symbol AND f.date = b.date WHERE b.symbol = 'FLG'"
     )
     assert joined.rows() == [(SEAM_DAYS[3], "jump_unexplained")]  # joinable, as the DESIGN says
-    assert report.n_symbol_days_flag_excluded == 0 and report.n_days_quarantined_skipped == 0
+    assert report.n_symbol_days_flag_excluded is None and report.n_days_quarantined_skipped == 0
     assert report.n_symbol_days_flagged == 1
     assert report.n_members_flagged_by_date == {SEAM_DAYS[3]: 1}
 
@@ -570,11 +637,25 @@ def test_quarantine_is_not_filled_from_yfinance(store):
     assert set(out["close"].to_list()) == {10.0}
 
 
-def test_failed_verdict_does_not_withhold(store):
+def test_unjudged_day_is_not_published(store):
+    """AMD-0021 2C: a historic 'failed' day that holds bars_raw rows was never judged."""
     store.write_bars_raw(raw_rows("QQQ1", SEAM_DAYS, 10.0, "polygon"))
-    _verdict(store, SEAM_DAYS[1], "failed")  # 'failed' = nothing fetched; only 'quarantined' holds
-    assert materialise(store, None).n_days_quarantined_skipped == 0
-    assert bars_of(store, "QQQ1").height == 6
+    for d in SEAM_DAYS:
+        _verdict(store, d, "failed")
+    materialise(store, None)
+    assert bars_of(store, "QQQ1").height == 0  # asserts zero rows: a blocklist would leak them
+    assert store.read("SELECT count(*) AS n FROM bars_raw")["n"][0] == 6  # CI-9
+
+
+def test_only_ok_days_are_published(store):
+    store.write_bars_raw(raw_rows("ALW", SEAM_DAYS, 10.0, "polygon"))
+    statuses = ["ok", "quarantined", "failed", "holiday", "invented_after_the_fact"]
+    for d, status in zip(SEAM_DAYS, statuses, strict=False):
+        _verdict(store, d, status)
+    # SEAM_DAYS[5] has NO verdict at all: no judgement against it, so it publishes (WO-0007)
+    report = materialise(store, None)
+    assert bars_of(store, "ALW")["date"].to_list() == [SEAM_DAYS[0], SEAM_DAYS[5]]
+    assert report.n_days_quarantined_skipped == 4
 
 
 def test_split_reconciled_flag_does_not_exclude(store):
@@ -582,7 +663,7 @@ def test_split_reconciled_flag_does_not_exclude(store):
     _flag(store, "SRC", SEAM_DAYS[3], "jump_split_reconciled")
     report = materialise(store, None)
     assert bars_of(store, "SRC").height == 6
-    assert report.n_symbol_days_flag_excluded == 0
+    assert report.n_symbol_days_flag_excluded is None
 
 
 def test_day_without_verdict_is_published(store):
@@ -637,7 +718,10 @@ def test_cli_materialise(clean_env, tmp_path):
     res = runner.invoke(app, ["adjust", "materialise", "--symbols", "SPL"])
     assert res.exit_code == 0, res.output
     assert "symbols=1 rows=7 readjusted=0 warnings=0" in res.output
-    assert "0 quarantined days not published, 0 flagged symbol-days excluded" in res.output
+    assert (
+        "0 quarantined days not published, flagged symbol-days excluded: not computed"
+        in res.output
+    )
     again = runner.invoke(app, ["adjust", "materialise"])
     assert "symbols=1 rows=0 readjusted=0" in again.output
     bad = runner.invoke(app, ["adjust", "materialise", "--symbols", "AAA,not valid"])
@@ -713,6 +797,66 @@ def test_unrecorded_dividend_basis_raises(store):
         )
 
 
+def _disagreement_case(store, sym, yf_amount):
+    """polygon declares 1.00 as paid, pre-split; yfinance restates its amount on the post-split
+    basis. A 2:1 split follows the ex-date, so the same economic dividend is 0.50 adjusted."""
+    days = weekdays(date(2026, 3, 2), 8)
+    store.write_bars_raw(
+        raw_rows(sym, days, 100.0, "polygon", ingested=datetime(2026, 3, 20, 6, 0))
+    )
+    put_splits(store, [(sym, date(2026, 4, 1), 2.0, "polygon")])
+    put_dividends(store, [(sym, days[4], 1.00, "polygon"), (sym, days[4], yf_amount, "yfinance")])
+
+
+def test_dividend_disagreement_normalises_basis(store):
+    _disagreement_case(store, "SAME", 0.50)  # same economics, two bases
+    _disagreement_case(store, "DIFF", 0.52)  # a genuine two-cent difference
+    report = materialise(store, None)
+    found = [w for w in report.warnings if w.startswith("dividend_disagreement")]
+    assert [w.split()[1] for w in found] == ["DIFF"]  # SAME raises none
+    assert "polygon=0.5000 yfinance=0.5200" in found[0]  # both amounts, on one basis
+    # the winning (Polygon) amount is the one applied
+    assert bars_of(store, "SAME")["adj_close"].to_list() == pytest.approx(
+        bars_of(store, "DIFF")["adj_close"].to_list()
+    )
+
+
+def test_split_on_ex_date_is_divided_out(store):
+    days = weekdays(date(2026, 3, 2), 8)
+    ex = days[4]
+    store.write_bars_raw(raw_rows("EXD", days, 100.0, "polygon", ingested=datetime(2026, 3, 2, 6)))
+    put_splits(store, [("EXD", ex, 2.0, "polygon")])  # effective ON the ex-date
+    put_dividends(store, [("EXD", ex, 1.00, "polygon")])  # as paid, declared before the split
+    materialise(store, None)
+    out = bars_of(store, "EXD")
+    assert out["close"].to_list()[:4] == [50.0] * 4 and out["close"].to_list()[4:] == [100.0] * 4
+    # 1.00 / 2 = 0.50 on a prior close of 50: factor 0.99 (an undivided dividend gives 0.98)
+    assert out["adj_close"].to_list()[:4] == pytest.approx([49.5] * 4, abs=1e-9)
+    assert out["adj_close"].to_list()[4:] == pytest.approx([100.0] * 4, abs=1e-9)
+
+
+def test_flag_excluded_count_is_never_a_silent_zero(store, clean_env, tmp_path, monkeypatch):
+    store.write_bars_raw(raw_rows("FLG", SEAM_DAYS, 10.0, "polygon"))
+    _flag(store, "FLG", SEAM_DAYS[3], "jump_unexplained")
+    report = materialise(store, None)
+    assert report.n_symbol_days_flagged == 1  # a flag exists...
+    assert report.n_symbol_days_flag_excluded is None  # ...but exclusion is not computed here
+    assert MaterialiseReport(1, 1, 0).n_symbol_days_flag_excluded is None  # default: not 0
+    # the CLI prints both shapes
+    clean_env.setenv("ARGUS_STORE_DIR", str(tmp_path / "store"))
+    clean_env.setenv("ARGUS_CONFIG_DIR", str(tmp_path / "config"))
+    runner = CliRunner()
+    assert "flagged symbol-days excluded: not computed" in runner.invoke(
+        app, ["adjust", "materialise"]
+    ).output
+    import argus.commands.adjust_cmds as cmds
+
+    monkeypatch.setattr(
+        cmds, "materialise", lambda *_a, **_k: MaterialiseReport(1, 1, 0, [], 0, 7)
+    )
+    assert "flagged symbol-days excluded: 7" in runner.invoke(app, ["adjust", "materialise"]).output
+
+
 # ------------------------------------------------------------------------------ DOUBLE prices
 def test_prices_are_float64(store):
     store.upsert(
@@ -753,7 +897,8 @@ def test_membership_boundary_counts_are_separated(tmp_path):
     s.write_bars_raw(
         pl.concat([raw_rows("PRE", pre_days, 10.0),
                    raw_rows("OLD", weekdays(date(2026, 1, 2), 3), 50.0),
-                   raw_rows("OLD", weekdays(date(2026, 2, 2), 12), 5.0)])
+                   raw_rows("OLD", weekdays(date(2026, 3, 2), 12), 5.0),
+                   calendar_rows(date(2026, 1, 2), 70)])
     )
     report = materialise(s, None)
     assert bars_of(s, "PRE").height == 30  # leading history is retained
