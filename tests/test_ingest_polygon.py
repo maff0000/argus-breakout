@@ -422,6 +422,27 @@ def test_revalidate_makes_no_provider_call(store, client):
 
 
 @respx.mock
+def test_revalidate_failure_writes_a_log_row(store, client, monkeypatch):
+    """AMD-0021 2C: a judging failure is recorded, not merely returned."""
+    _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
+    assert ingest_polygon_day(store, client, D).status == "ok"
+
+    def boom(*_a, **_k):
+        raise RuntimeError("judge exploded")
+
+    monkeypatch.setattr("argus.data.ingest_polygon._judge", boom)
+    digest = _bars_raw_digest(store)
+    results = revalidate_range(store, D, D)
+    assert [r.status for r in results] == ["quarantined"]
+    assert _last_status(store, D) == "quarantined"  # the stale 'ok' no longer stands
+    detail = store.read(
+        "SELECT detail FROM ingest_log WHERE date = ? ORDER BY finished_at DESC LIMIT 1", [D]
+    )["detail"][0]
+    assert "RuntimeError" in detail and "judge exploded" in detail
+    assert _bars_raw_digest(store) == digest
+
+
+@respx.mock
 def test_cli_revalidate_needs_no_key_and_no_network(clean_env, store, client):
     _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
     assert ingest_polygon_day(store, client, D).status == "ok"

@@ -13,22 +13,30 @@ rather than per source, so a source fetched in two runs either side of D (Polygo
 ingest after a yfinance bootstrap) gets the right answer for each row. Where `ingested_at` is
 absent the per-(symbol, source) latest bar date stands in for it, which is the WO's wording.
 
-Quality seam (AMD-0018 2A, AMD-0019 2A). `bars_raw` is read whole. Source precedence picks the
-row for each (symbol, day); a Polygon row of a day whose latest `ingest_log` verdict for source
-'polygon' is 'quarantined' is then withheld, and NOTHING takes its place (no cross-source
-substitution). A `bar_flags` row never withholds anything: a flag is carried, joinable on
-(symbol, date, source), and only the equal-weight AGGREGATES exclude flagged symbol-days
+Quality seam (AMD-0018 2A, AMD-0019 2A, AMD-0021 2C). `bars_raw` is read whole. Source
+precedence picks the row for each (symbol, day); a Polygon row of a day whose latest `ingest_log`
+verdict for source 'polygon' is anything other than 'ok' is then withheld, and NOTHING takes its
+place (no cross-source substitution). Publication is an ALLOWLIST: a day with stored rows and a
+verdict that is not 'ok' ('quarantined', 'failed', or a status invented later) is unjudged data.
+A day with NO verdict at all (every yfinance-bootstrap day, history older than the Polygon
+backfill) has no judgement against it and publishes, as it did under WO-0007.
+
+A `bar_flags` row never withholds anything: a flag is carried, joinable on (symbol, date,
+source), and only the equal-weight AGGREGATES exclude flagged symbol-days
 (`equal_weight_aggregate`). bars_raw itself is never altered (CI-9). Counts travel in the
 report (CI-8).
 
 Dividend basis (AMD-0019 2B). A dividend is brought onto the price basis before it enters the
 factor: an 'as_paid' amount is divided by the cumulative split ratio of the splits dated after
 its ex-date (`split_cum`, computed in `apply_splits` beside the price divisor), a
-'split_adjusted' amount is used as stored, and any other basis raises.
+'split_adjusted' amount is used as stored, and any other basis raises. The divisor is the
+`split_cum` of the last bar BEFORE the ex-date, so a split dated on the ex-date is divided out
+(the dividend was declared before it; AMD-0021 2D). `dividend_disagreement` compares two sources
+only after both are put on that one basis (AMD-0021 2D).
 """
 
 import json
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 
@@ -53,13 +61,19 @@ POLYGON = "polygon"
 # series never drops a flagged day. `jump_split_reconciled` is absent: the split explains the
 # move, so the day is sound (AMD-0018 2C).
 AGGREGATE_EXCLUDING_FLAGS = frozenset({"jump_unexplained"})
-_QUARANTINED = "quarantined"
+_OK = "ok"  # the only ingest_log status that admits a day to publication (AMD-0021 2C)
 _DIVIDEND_BASES = frozenset({"as_paid", "split_adjusted"})
 
 _PCT_THRESHOLD = 0.5  # close disagreement between sources, percent (WO-0007 4)
 _RATIO_TOLERANCE = 0.001  # split ratio disagreement, relative (0.1%, AMD-0012)
 _DIVIDEND_TOLERANCE = 0.01  # dividend disagreement, one cent (AMD-0012)
-_OUTSIDE_TRADING_DAYS = 10  # AMD-0018 2F
+# AMD-0021 2B: a symbol's post-membership tail is excluded only where the ticker was REASSIGNED.
+# A reassigned ticker's hiatus runs to months or years (a delisting, then a different company
+# taking the symbol); a company that merely leaves the index trades straight through its
+# end_date. A gap of more than this many trading days across the final membership.end_date
+# is therefore the reassignment hazard; a gap of this many or fewer is the same company. Changeable
+# only by Amendment.
+_MAX_SAME_COMPANY_GAP_TRADING_DAYS = 20
 _MAX_PRIOR_GAP_DAYS = 5  # a prior bar older than this is not "the prior trading day"
 _CHANGE_TOLERANCE = 1e-9
 _BATCH = 50
@@ -77,15 +91,18 @@ class MaterialiseReport:
     n_readjusted: symbols whose already-published rows changed, so adj_version incremented.
     warnings: one string per finding, `<kind> <symbol> <date|-> <detail>`.
 
-    n_days_quarantined_skipped: distinct days whose Polygon rows were withheld.
-    n_symbol_days_flag_excluded: ALWAYS 0 since AMD-0019 2A (a flag never withholds a published
-      symbol-day); kept only so the CLI summary line keeps its shape.
+    n_days_quarantined_skipped: distinct days whose Polygon rows were withheld because their
+      latest verdict is not 'ok' (AMD-0021 2C; the name predates the allowlist).
+    n_symbol_days_flag_excluded: the measured count, or None where it is not computed (AMD-0021
+      2F, CI-8). Materialisation never excludes a flagged symbol-day (AMD-0019 2A; only the
+      aggregates do), so it does not compute this figure and reports None, never 0.
     n_symbol_days_flagged: published symbol-days carrying an excluding flag (carried, not dropped).
     n_members_flagged_by_date: per date, the number of published symbols flagged that day
       (the `n_members_flagged` coverage figure, DESIGN 6.1); only dates with >= 1 are listed.
     n_bars_before_first_membership: pre-entry bars, retained and merely counted (AMD-0019 2D).
-    n_bars_after_final_end_without_continuity: bars dropped after a delisted member's final end
-      with no rename continuity (the AMD-0018 2F hazard); a run of more than ten warns per symbol.
+    n_bars_after_final_end_without_continuity: bars dropped after a member's final end because
+      the ticker was reassigned (a trading gap of more than 20 days across it, no rename
+      continuity; AMD-0021 2B). Each such symbol warns, naming the gap.
     """
 
     n_symbols: int
@@ -93,7 +110,7 @@ class MaterialiseReport:
     n_readjusted: int
     warnings: list[str] = field(default_factory=list)
     n_days_quarantined_skipped: int = 0
-    n_symbol_days_flag_excluded: int = 0
+    n_symbol_days_flag_excluded: int | None = None
     n_symbol_days_flagged: int = 0
     n_members_flagged_by_date: dict[date, int] = field(default_factory=dict)
     n_bars_before_first_membership: int = 0
@@ -149,9 +166,12 @@ def source_disagreements(raw: pl.DataFrame, threshold_pct: float = _PCT_THRESHOL
 
 # ---------------------------------------------------------------------------- corporate actions
 def _resolve_actions(
-    actions: pl.DataFrame, value: str, kind: str, disagrees
+    actions: pl.DataFrame, value: str, kind: str, disagrees, comparable=None
 ) -> tuple[pl.DataFrame, list[str]]:
-    """One row per (symbol, date), Polygon over yfinance; a warning where the sources disagree."""
+    """One row per (symbol, date), Polygon over yfinance; a warning where the sources disagree.
+
+    `comparable(row) -> float` puts a row's amount on a basis shared by both sources before they
+    are compared (default: the stored amount)."""
     warnings: list[str] = []
     if actions.is_empty():
         return actions, warnings
@@ -160,14 +180,14 @@ def _resolve_actions(
         if grp.height < 2:
             continue
         win = grp.row(0, named=True)
+        w_cmp = comparable(win) if comparable else win[value]
         for k, other in enumerate(grp.iter_rows(named=True)):
-            if k > 0 and disagrees(win[value], other[value]):
-                warnings.append(
-                    _warn(
-                        kind, win["symbol"], win["date"],
-                        f"{win['source']}={win[value]:.4f} {other['source']}={other[value]:.4f}",
-                    )
-                )
+            o_cmp = comparable(other) if comparable else other[value]
+            if k > 0 and disagrees(w_cmp, o_cmp):
+                detail = f"{win['source']}={w_cmp:.4f} {other['source']}={o_cmp:.4f}"
+                if comparable:
+                    detail += f" (normalised; stored {win[value]:.4f}/{other[value]:.4f})"
+                warnings.append(_warn(kind, win["symbol"], win["date"], detail))
     kept = ranked.unique(subset=["symbol", "date"], keep="first", maintain_order=True)
     return kept.drop("_rank").sort(["symbol", "date"]), warnings
 
@@ -180,11 +200,27 @@ def resolve_splits(splits: pl.DataFrame) -> tuple[pl.DataFrame, list[str]]:
     )
 
 
-def resolve_dividends(dividends: pl.DataFrame) -> tuple[pl.DataFrame, list[str]]:
-    """Duplicates resolved by precedence; amounts more than one cent apart are warned."""
+def resolve_dividends(
+    dividends: pl.DataFrame, split_cum_at=None
+) -> tuple[pl.DataFrame, list[str]]:
+    """Duplicates resolved by precedence; amounts more than one cent apart are warned.
+
+    The comparison is on one basis (AMD-0021 2D): `split_cum_at(symbol, ex_date)` is the
+    cumulative ratio of the splits after the ex-date, an 'as_paid' amount is divided by it and a
+    'split_adjusted' one is used as stored, so the thresholds apply to comparable numbers.
+    Without `split_cum_at` (or without a `basis` column) amounts are compared as stored."""
+    comparable = None
+    if split_cum_at is not None and "basis" in dividends.columns:
+
+        def comparable(row: dict) -> float:
+            if row["basis"] == "as_paid":
+                return row["cash_amount"] / split_cum_at(row["symbol"], row["date"])
+            return row["cash_amount"]
+
     return _resolve_actions(
         dividends, "cash_amount", "dividend_disagreement",
         lambda a, b: abs(round(a, 4) - round(b, 4)) > _DIVIDEND_TOLERANCE + 1e-9,
+        comparable,
     )
 
 
@@ -253,8 +289,9 @@ def dividend_adjusted_close(
 
     `bars` is one symbol's split-adjusted series; the result is aligned to its row order. Each
     dividend is first put on the price basis (AMD-0019 2B): `as_paid` amounts are divided by the
-    `split_cum` of the first bar on or after the ex-date (splits dated after the ex-date; a
-    `bars` frame without the column has no splits), `split_adjusted` amounts are used as stored.
+    `split_cum` of the last bar BEFORE the ex-date (so a split dated on the ex-date is divided
+    out, AMD-0021 2D; a `bars` frame without the column has no splits), `split_adjusted` amounts
+    are used as stored. The two sources' amounts are compared only on that same basis.
     A `dividends` frame without a `basis` column, or a row whose basis is null or not one of the
     two, raises ValueError: the basis is never defaulted. The
     prior close is the last bar before the ex-date. If there is none within five calendar days
@@ -274,7 +311,13 @@ def dividend_adjusted_close(
     closes = [all_closes[i] for i in order]
     cums = [all_cum[i] for i in order]
     boundary = [1.0] * n  # boundary[k]: factor owed by every row at or before k
-    resolved, found = resolve_dividends(dividends.filter(pl.col("symbol") == sym))
+
+    def split_cum_at(_symbol: str, ex: date) -> float:
+        return cums[max(bisect_left(dates, ex) - 1, 0)]
+
+    resolved, found = resolve_dividends(
+        dividends.filter(pl.col("symbol") == sym), split_cum_at
+    )
     sink = warnings if warnings is not None else []
     sink.extend(found)
     for ex, amount, basis in resolved.select("date", "cash_amount", "basis").iter_rows():
@@ -284,7 +327,7 @@ def dividend_adjusted_close(
         if i == 0:
             continue
         if basis == "as_paid":
-            amount = amount / cums[i]  # onto the split-adjusted share count of the prices
+            amount = amount / cums[i - 1]  # onto the split-adjusted share count of the prices
         prior = closes[i - 1]
         if (ex - dates[i - 1]).days > _MAX_PRIOR_GAP_DAYS or not (prior and prior > 0):
             sink.append(_warn("dividend_skipped_no_prior_close", sym, ex, f"amount={amount:.4f}"))
@@ -307,6 +350,21 @@ def dividend_adjusted_close(
 
 
 # ---------------------------------------------------------------------------- materialise
+def _trading_gap(calendar: list[date], present: list[date], final_end: date) -> int | None:
+    """Trading days with no bar for this symbol across `final_end` (AMD-0021 2B).
+
+    `calendar`: the sorted distinct dates present in `bars_raw` (any symbol) - the days the market
+    traded; `present`: this symbol's own `bars_raw` dates. The gap is the number of calendar days
+    strictly between the symbol's last bar on or before `final_end` (the end date itself when it
+    has none) and its first bar after it, so a holiday run is not a gap. None: no bar after
+    `final_end`, so there is no tail."""
+    after = min((d for d in present if d > final_end), default=None)
+    if after is None:
+        return None
+    before = max((d for d in present if d <= final_end), default=final_end)
+    return bisect_left(calendar, after) - bisect_right(calendar, before)
+
+
 def _bound_by_membership(
     sel: pl.DataFrame,
     member: pl.DataFrame,
@@ -314,32 +372,38 @@ def _bound_by_membership(
     continuity: bool,
     warnings: list[str],
     stats: dict,
-) -> pl.DataFrame:
-    """AMD-0018 2F / AMD-0019 2D: a symbol's bars end with its listing life.
+    present: list[date],
+    calendar: list[date],
+) -> tuple[pl.DataFrame, bool]:
+    """AMD-0021 2B (narrowing AMD-0018 2F): (frame, whether a reassigned tail was excluded).
 
     Bars BEFORE the first membership are required history: kept and only counted
-    (`stats["before_first"]`). Bars after a delisted member's final end_date are dropped unless
-    the symbol is mapped forward as a rename (continuity); they are counted in
-    `stats["after_final"]` and a run of more than ten warns, per symbol."""
+    (`stats["before_first"]`). Bars after a member's final end_date are the same company's, and
+    retained, unless a trading gap of more than 20 days (`present` against `calendar`) separates
+    them from the member's own bars: that is a reassigned ticker, whose tail is excluded, counted
+    in `stats["after_final"]` and warned per symbol with the gap. A symbol mapped forward as a
+    rename (continuity) is never cut and never warned."""
     if member.is_empty() or sel.is_empty():
-        return sel
+        return sel, False
     starts = member["start_date"].to_list()
     ends = member["end_date"].to_list()
     stats["before_first"] += sel.filter(pl.col("date") < min(starts)).height
     if None in ends or continuity:
-        return sel
+        return sel, False
     final_end = max(ends)
+    gap = _trading_gap(calendar, present, final_end)
+    if gap is None or gap <= _MAX_SAME_COMPANY_GAP_TRADING_DAYS:
+        return sel, False
     after = sel.filter(pl.col("date") > final_end).height
     stats["after_final"] += after
-    if after > _OUTSIDE_TRADING_DAYS:
-        warnings.append(
-            _warn(
-                "bars_after_final_end_without_continuity", symbol, None,
-                f"after_final_end={after} final_end={final_end.isoformat()} "
-                "rename_continuity=false",
-            )
+    warnings.append(
+        _warn(
+            "bars_after_final_end_without_continuity", symbol, None,
+            f"after_final_end={after} final_end={final_end.isoformat()} "
+            f"gap_trading_days={gap} rename_continuity=false",
         )
-    return sel.filter(pl.col("date") <= final_end)
+    )
+    return sel.filter(pl.col("date") <= final_end), True
 
 
 def _changed(existing: pl.DataFrame, new: pl.DataFrame) -> bool:
@@ -364,32 +428,36 @@ def _materialise_symbol(
     member: pl.DataFrame,
     continuity: bool,
     warnings: list[str],
-    quarantined: frozenset[date],
+    withheld: frozenset[date],
     flags: pl.DataFrame,
     stats: dict,
+    calendar: list[date],
 ) -> tuple[pl.DataFrame | None, bool]:
     """(frame to write or None when unchanged, whether published rows were re-adjusted).
 
-    `quarantined`: days whose Polygon rows are withheld; `flags`: this symbol's excluding
-    bar_flags rows, which are only counted (`stats["flagged"]`), never used to drop a row."""
+    `withheld`: days whose Polygon rows are withheld (latest verdict not 'ok'); `flags`: this
+    symbol's excluding bar_flags rows, which are only counted (`stats["flagged"]`), never used
+    to drop a row."""
     ok = raw.filter(pl.col("basis") == _SUPPORTED_BASIS)
     if ok.height != raw.height:
         warnings.append(
             _warn("unsupported_basis_skipped", sym, None, f"rows={raw.height - ok.height}")
         )
     sel = select_source(ok)
-    # A quarantined Polygon day is withheld and NOT filled from yfinance (AMD-0019 2A).
-    held = sel.filter((pl.col("source") == POLYGON) & pl.col("date").is_in(sorted(quarantined)))
+    # A withheld Polygon day is not published and NOT filled from yfinance (AMD-0019 2A).
+    held = sel.filter((pl.col("source") == POLYGON) & pl.col("date").is_in(sorted(withheld)))
     if held.height:
         stats["skipped_days"].update(held["date"])
         sel = sel.join(held.select("symbol", "date"), on=["symbol", "date"], how="anti")
-    sel = _bound_by_membership(sel, member, sym, continuity, warnings, stats)
+    sel, bounded = _bound_by_membership(
+        sel, member, sym, continuity, warnings, stats, raw["date"].to_list(), calendar
+    )
     if sel.is_empty():
         warnings.append(_warn("no_bars", sym, None, "nothing to publish"))
         return None, False
     ends = member["end_date"].to_list()
-    if ends and None not in ends and not continuity:
-        # a delisted member's actions after its final end_date belong to a successor company
+    if bounded:
+        # a reassigned ticker's actions after the final end_date belong to the successor company
         splits = splits.filter(pl.col("date") <= max(ends))
         dividends = dividends.filter(pl.col("date") <= max(ends))
     carried = flags.join(sel.select("symbol", "date", "source"), on=["symbol", "date", "source"])
@@ -430,11 +498,14 @@ def materialise(store: Store, symbols: list[str] | None = None) -> MaterialiseRe
             "symbol"
         ].to_list()
     warnings: list[str] = []
-    # A day with NO ingest_log verdict for 'polygon' (every yfinance-bootstrap day, or history
-    # older than the Polygon backfill) has no judgement against it, so it is publishable. Only a
-    # 'quarantined' verdict withholds a day (AMD-0019 2A); 'failed' means nothing was fetched.
+    # Publication is an allowlist (AMD-0021 2C): a day whose latest polygon verdict exists and is
+    # not 'ok' is withheld - 'quarantined', 'failed', or any status invented later. A day with NO
+    # verdict row at all (every yfinance-bootstrap day, or history older than the Polygon
+    # backfill) is absent from `verdicts`, so it is not in `withheld` and publishes as WO-0007
+    # established: no polygon verdict means no judgement against it.
     verdicts = store.read_ingest_verdicts(POLYGON)
-    quarantined = frozenset(verdicts.filter(pl.col("status") == _QUARANTINED)["date"].to_list())
+    withheld = frozenset(verdicts.filter(pl.col("status") != _OK)["date"].to_list())
+    calendar = store.read("SELECT DISTINCT date FROM bars_raw ORDER BY date")["date"].to_list()
     flagged = store.read_bar_flags(targets, sorted(AGGREGATE_EXCLUDING_FLAGS))
     stats: dict = {
         "skipped_days": set(), "flagged": set(), "before_first": 0, "after_final": 0,
@@ -475,7 +546,7 @@ def materialise(store: Store, symbols: list[str] | None = None) -> MaterialiseRe
             frame, readjusted = _materialise_symbol(
                 sym, raw, existing, actions_for(splits, sym), actions_for(dividends, sym),
                 membership.filter(pl.col("symbol") == sym), continuity, warnings,
-                quarantined, flagged.filter(pl.col("symbol") == sym), stats,
+                withheld, flagged.filter(pl.col("symbol") == sym), stats, calendar,
             )
             n_readjusted += readjusted
             if frame is not None:
@@ -489,7 +560,7 @@ def materialise(store: Store, symbols: list[str] | None = None) -> MaterialiseRe
     by_date = dict(sorted(by_date.items()))
     n_skipped = len(stats["skipped_days"])
     report = MaterialiseReport(
-        len(targets), n_rows, n_readjusted, warnings, n_skipped, 0, len(stats["flagged"]),
+        len(targets), n_rows, n_readjusted, warnings, n_skipped, None, len(stats["flagged"]),
         by_date, stats["before_first"], stats["after_final"],
     )
     detail = json.dumps(

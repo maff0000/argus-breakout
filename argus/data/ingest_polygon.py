@@ -183,7 +183,8 @@ def backfill_polygon(
 def revalidate_range(store: Store, start: date, end: date) -> list[IngestResult]:
     """Re-judge every stored day in [start, end]: no provider call, bars_raw never written.
 
-    Rewrites ingest_log and bar_flags only (AMD-0018 2D).
+    Rewrites ingest_log and bar_flags only (AMD-0018 2D). A day that cannot be judged gets a
+    'quarantined' row carrying the exception (AMD-0021 2C).
     """
     dates = store.read(
         "SELECT DISTINCT date FROM bars_raw WHERE source = ? AND date >= ? AND date <= ? "
@@ -198,11 +199,13 @@ def revalidate_range(store: Store, start: date, end: date) -> list[IngestResult]
                 [SOURCE, d],
             )
             results.append(_judge(store, d, bars))
-        except Exception as exc:  # noqa: BLE001 - recorded as failed in ingest_log
-            # Not written to ingest_log: the day IS stored, and a 'failed' row would make the
-            # backfill re-fetch it. The caller sees the failure in the returned results.
+        except Exception as exc:  # noqa: BLE001 - recorded as quarantined in ingest_log
+            # AMD-0021 2C: a judging failure always writes a log row, or the day keeps a stale
+            # verdict indefinitely. 'quarantined', not 'failed': the day IS stored, and a
+            # 'failed' row would make the backfill re-fetch it (AMD-0019 2E).
             log.error("revalidate_failed", date=d.isoformat(), error=type(exc).__name__)
-            results.append(IngestResult(0, "failed", f"{type(exc).__name__}: {exc}"))
+            detail = f"revalidation failed: {type(exc).__name__}: {exc}"
+            results.append(_finish(store, d, IngestResult(0, "quarantined", detail)))
     return results
 
 
