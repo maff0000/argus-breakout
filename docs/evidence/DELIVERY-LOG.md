@@ -80,3 +80,7 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-21T01:17Z  WO-0007  Audited GREEN  whole-branch at dd8d830; evidence docs/evidence/WO-0007/
 2026-10-21T01:17Z  WO-0007  Accepted  delegated acceptance; AC2 shortfall (17 of 20, three misses excluded by AMD-0018 2F) in spec-defects.md, flagged for confirmation
 2026-10-21T01:17Z  WO-0007  Closed  merged via PR
+2026-10-21T09:34Z  WO-0013  Implemented  head df4b52d (Implementer diff reviewed and committed by DC; mechanicals green on host)
+2026-10-21T09:34Z  WO-0013  Audited GREEN  audited sha df4b52d; no findings; evidence docs/evidence/WO-0013/
+2026-10-21T09:34Z  WO-0013  Operator checks  copy of scratch store, no network: AC1-AC5, AC7 met; see operator-checks.md
+2026-10-21T09:34Z  WO-0013  PR Open  awaiting ARCHITECT ACCEPTANCE (outside the AMD-0010 mandate)
