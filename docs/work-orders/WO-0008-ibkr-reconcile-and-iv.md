@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.6, §8.7 (`ibkr reconcile`, `ibkr iv`) ; `DESIGN.md` §3.1, §3.3 (reconciliation), §3.2 (`iv_daily`, `reconcile_log`) ; ADR-0006 |
-| **Applicable Amendments** | AMD-0002, AMD-0012 |
+| **Applicable Amendments** | AMD-0002, AMD-0012, AMD-0019 (delta, pre-dispatch — §2 paper-port enforcement and flag-first sampling) |
 | **Base SHA** | main at Closure of WO-0007 |
 | **Branch** | `wo/0008-ibkr-reconcile-and-iv` |
 | **Depends on** | WO-0007 |
@@ -31,8 +31,15 @@ argus/data/providers/ibkr.py         create  class IBClient(Protocol):   # the s
                                                Stock(symbol_provider_form, 'SMART', 'USD'); reqHistoricalData(..., barSizeSetting='1 day', useRTH=True,
                                                formatDate=2); pacing: ≤ 50 historical requests per 10 minutes (RateLimiter)
                                              source="ibkr"; basis: TRADES="split", ADJUSTED_LAST="split_div"
-argus/data/reconcile.py              create  choose_sample(members: list[str], on: date, n: int = 20) -> list[str]
-                                               (deterministic rotation: sorted members, offset = (ordinal(on) * n) % len)
+argus/data/reconcile.py              create  choose_sample(members: list[str], on: date, n: int = 20,
+                                                 priority: list[str] | None = None) -> list[str]
+                                               (deterministic rotation: sorted members, offset = (ordinal(on) * n) % len.
+                                                AMD-0019 §3: symbols in `priority` — members carrying an unresolved
+                                                `jump_unexplained` flag from the previous session — are placed FIRST and the
+                                                rotation fills the remainder; the offset advances as if the full sample had
+                                                been drawn, so the rotation still covers the universe over time. This makes a
+                                                flag adjudicable by a third source within a day out of a request budget
+                                                already being spent)
                                              reconcile_day(store, client, on: date, sample: list[str], lookback_days: int = 5) -> ReconcileReport(
                                                n_symbols, n_fields, n_breaches, breach_rate, rows: pl.DataFrame)
                                                (compare bars.close vs TRADES close, tolerance 0.1%; bars.volume vs volume, tolerance 10%; write every
@@ -41,6 +48,10 @@ argus/data/reconcile.py              create  choose_sample(members: list[str], o
                                                (iv30 from OPTION_IMPLIED_VOLATILITY, hv30 from HISTORICAL_VOLATILITY, last 5 days; upsert iv_daily, source='ibkr')
 argus/commands/ibkr_cmds.py          create  `ibkr reconcile --date D [--sample 20]`, `ibkr iv --date D` (registers onto argus.commands.ibkr.app;
                                              both require settings.ib_port; exit 2 with ConfigError message when missing)
+                                             PAPER-PORT ENFORCEMENT (AMD-0019 §3): settings.ib_port must be a paper port —
+                                             7497 (TWS paper) or 4002 (IB Gateway paper), as a module-level allowlist
+                                             constant. A live port (7496, 4001) or any other value raises ConfigError naming
+                                             the value and exits 2 WITHOUT opening a socket
 argus/cli.py                         modify  add exactly one import line for argus.commands.ibkr_cmds in the append-only block (AMD-0002)
 tests/fakes/fake_ib.py               create  FakeIBClient(IBClient) seeded from parquet fixtures; records calls
 tests/fixtures/ibkr/trades_sample.parquet       create  5 symbols × 10 days, two deliberate breaches (one close, one volume)
@@ -79,6 +90,8 @@ of dates; a symbol with no IBKR data is recorded as `field='missing'`,
 - **AC3** — `grep -rn "placeOrder\|reqIds\|cancelOrder\|modifyOrder\|whatIfOrder" argus/` returns nothing (Auditor check).
 - **AC4** — Connection is read-only (Auditor: `readonly=True` present in connect call; no write API used).
 - **AC5** — Tests in §5 pass offline; live smoke passes on host (operator check).
+- **AC6** — A live port in the environment exits 2 **without opening a socket** (test: a monkeypatched `connect` asserted never called, for 7496 and 4001; and 7497/4002 accepted). The Work Order already excludes every order, account and position call — this is the cheapest guard against speaking to the wrong gateway at all (AMD-0019 §3).
+- **AC7** — `choose_sample` places unresolved `jump_unexplained` symbols first and still covers the universe over time (test: a priority list is sampled first; consecutive dates with no priority remain disjoint until wrap).
 
 ## 7. Evidence the Delivery Controller must file
 `tests.md`, `auditor-prompt.md`, `audit.md`, `acceptance.md`,

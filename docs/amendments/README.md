@@ -20,3 +20,4 @@ Approved changes to PIDs, one file per amendment (`AMD-NNNN-<slug>.md`), per `do
 - [AMD-0016](AMD-0016-classification-seam-and-wider-controller-authority.md) — The classification seam; rename-aware bars lookup; wider Delivery Controller authority (Applied)
 - [AMD-0017](AMD-0017-store-relocation-and-vacuous-rules.md) — Store relocation safety; a rule that cannot fire is not a pass; WO-0003 already cleared (Applied)
 - [AMD-0018](AMD-0018-raw-is-never-gated-and-the-jump-rule-repair.md) — `bars_raw` is never gated by a quality judgement; the 25%-jump rule repaired on three counts; WO-0004 delta, WO-0012 narrowed (Applied)
+- [AMD-0019](AMD-0019-a-flag-is-carried-not-subtracted.md) — A flag is carried, not subtracted; dividends must be on the price basis; prices are DOUBLE; standing ruling 9; WO-0013 and the WO-0008 delta (Applied)

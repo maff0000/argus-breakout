@@ -26,14 +26,19 @@ mirror; the Work Order file is authoritative.
 | [WO-0010](WO-0010-secret-drop-hardening.md) | Secret-drop hardening: ignore credential-shaped files, document the drop procedure | — | P0-A (independent of WO-0001) | Merged |
 | [WO-0011](WO-0011-actions-schema-correction.md) | Corporate-actions schema correction: `splits` and `dividends` (AMD-0012 defect fix) | — | P0-B2 | Merged (`02e4a2e`) |
 | [WO-0012](WO-0012-store-identity-and-vacuous-validation.md) | Store relocation safety (AMD-0017 §2A; the `validate.py` half moved to WO-0004 by AMD-0018 §2G) | WO-0004 (`SCHEMA_VERSION` 4 after WO-0004's 3) | P0-D2 — may run with WO-0007 | Approved |
+| [WO-0013](WO-0013-materialisation-basis-corrections.md) | Materialisation basis corrections: flags carried not subtracted, dividend basis measured, prices DOUBLE (AMD-0019) | WO-0007 (merged — this corrects it) | P0-E2 — may run with WO-0008 | Approved |
 
 Execution order for the Delivery Controller: **WO-0001 + WO-0010
 concurrently** (P0-A) → **WO-0002** (P0-B, merged `bdce04d`) →
 **WO-0003 + WO-0004 + WO-0005** concurrently (P0-C, all audited GREEN,
 deltas pending) → **WO-0011** (P0-B2, must merge before the WO-0004/0005
 deltas) → D (two concurrent) → E → F. Current order of work is set by
-**AMD-0018 §3**: the WO-0004 delta and its re-run first (it blocks P0-D),
-then WO-0007 as soon as WO-0004 merges, with WO-0012 after it; then P0-E.
+**AMD-0019 §3**: WO-0001…WO-0007, WO-0010, WO-0011 and WO-0012 are merged.
+**WO-0008 and WO-0013 run concurrently** (P0-E / P0-E2 — they share no
+file); then WO-0009 (P0-F). WO-0008's approval authorises **dispatch**;
+AMD-0010 withholds only its pre-committed **merge**, which is a later gate
+(AMD-0019 §2K). WO-0013 does not block Phase 0 but **must** close before
+PID-ARGUS-0002 computes a feature.
 WO-0003, WO-0005, WO-0006 and WO-0011 are merged.
 Base SHAs for dependent Work Orders are by-reference (`main at Closure of
 …`) and are resolved by the Delivery Controller when their dependencies

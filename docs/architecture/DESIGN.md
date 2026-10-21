@@ -115,8 +115,12 @@ bars_raw       (symbol TEXT, date DATE, open DOUBLE, high DOUBLE, low DOUBLE, cl
                 ingested_at TIMESTAMP)                                         -- as received, with its adjustment basis
 splits         (symbol TEXT, date DATE, ratio DOUBLE NOT NULL, source TEXT)
                 -- PK (symbol, date, source). date = execution/effective date. ratio = to/from (2.0 for a 2:1).
-dividends      (symbol TEXT, date DATE, cash_amount DOUBLE NOT NULL, source TEXT)
+dividends      (symbol TEXT, date DATE, cash_amount DOUBLE NOT NULL, basis TEXT NOT NULL, source TEXT)
                 -- PK (symbol, date, source). date = ex-dividend date.
+                -- basis {'as_paid','split_adjusted'} (AMD-0019 §2B): whether cash_amount sits on the
+                -- share count of the ex-date or is already restated onto the current basis. Recorded
+                -- per source from a measured check, never assumed. A dividend must be on the same
+                -- basis as the price it divides.
                 -- Two tables, not one nullable-measure table: a split and a dividend on the same
                 -- (symbol, date) must both survive, from each source independently (AMD-0012).
 bars           (symbol TEXT, date DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,
@@ -177,7 +181,21 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
   materialised from them by `argus/data/adjust.py`. Free sources deliver
   split-adjusted history, so the canonical basis of `bars` OHLCV is
   **split-adjusted**, with `adj_close` additionally dividend-adjusted
-  (factor Π(1 − dividend/prev_close) applied backwards). When a new split
+  (factor Π(1 − dividend/prev_close) applied backwards).
+  **A dividend must be on the same basis as the price it divides**
+  (AMD-0019 §2B): before use in that factor an `as_paid` amount is divided
+  by the cumulative split ratio applied to that symbol between the ex-date
+  and the adjustment reference date — the same cumulative factor that
+  split-adjusts the prices — while a `split_adjusted` amount is used as
+  stored. Mixing the two overstates the adjustment by the split ratio: a
+  4:1 split makes every earlier dividend count four times over, and
+  `adj_close` carries that error into every return-type feature in §5.
+  Each source's basis is established by **measurement**, recorded in
+  `dividends.basis`; a source whose basis cannot be established is a stop,
+  never a default.
+  Price columns and `adj_close` are stored **DOUBLE** (AMD-0019 §2C);
+  float32 puts a 6e-8 relative floor under every published close and every
+  return derived from one. When a new split
   arrives, the symbol's history is re-adjusted and `adj_version`
   increments; nothing is overwritten silently. §5 features use
   split-adjusted OHLCV; return-type features (`ret*`, `mom12_1`, `rs_*`)
@@ -192,9 +210,28 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
   CI-9). No validation verdict may prevent a fetched row from being stored.
   Validation records a judgement *about* a day; it is not a gate on
   persisting it. The quality seam is `bars_raw` → `bars`
-  (`argus/data/adjust.py`), which publishes only days whose
-  `ingest_log.status = 'ok'` and excludes flagged symbol-days per
-  `bar_flags`.
+  (`argus/data/adjust.py`).
+- Publication withholds a **day** whose `ingest_log.status` is
+  `'quarantined'` — a day-level verdict is a vendor-fault finding. It
+  **never withholds a symbol-day for carrying a `bar_flags` row**
+  (AMD-0019 §2A; AMD-0018 §2A's exclusion clause is withdrawn). A flag is
+  an advisory that travels with the row: consumers join `bar_flags` on
+  `(symbol, date, source)` and decide for themselves. A `jump_unexplained`
+  flag on a member is the most interesting row of the night, not a row to
+  delete — and on the measured sample 51 of 51 such flags were real price
+  moves corroborated by an independent source to 1e-5.
+- **Never substitute across sources** to fill a flagged or withheld
+  symbol-day (AMD-0019 §2A). Source precedence (Polygon over yfinance)
+  decides which source supplies a symbol's series; a flag does not re-open
+  that choice. Switching source on the day of a large move mixes two
+  adjustment bases at the worst possible moment and is not reproducible.
+- **Aggregates exclude, series do not** (AMD-0019 §2A). `composites`,
+  `market_daily` and `sector_daily` exclude flagged symbol-days from their
+  equal-weight means — one bad print distorts a 500-member average — and
+  report the count excluded per date (CI-8, §6.1). A symbol's **own**
+  series keeps the row: a hole severs the price history and breaks every
+  252-day momentum and relative-strength feature crossing it, which is the
+  damage CI-2 exists to prevent.
 - `ingest_log.status` ∈ `{'ok','quarantined','holiday','failed'}`
   (AMD-0018 §2A). `'ok'` — stored, no day-level fault; any symbol flags
   counted in `detail`. `'quarantined'` — **stored in `bars_raw`** but
@@ -233,9 +270,14 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
   an unrelated company, WO-0007 must not join the two companies' rows into
   one series: bars after the member's final `membership.end_date` are
   excluded unless `config/ticker_renames.yaml` maps the symbol forward as
-  continuity (AMD-0014, AMD-0016). `MaterialiseReport.warnings` records
-  every symbol with bars outside its membership intervals by more than 10
-  trading days. Untreated, a reverse split at the new company appears as a
+  continuity (AMD-0014, AMD-0016). **This bounds the tail only: bars before
+  a symbol's first `start_date` are retained**, because the §5 features
+  need pre-entry history (AMD-0019 §2D). `MaterialiseReport` therefore
+  reports two separate figures — `n_bars_before_first_membership`
+  (counted, never warned) and
+  `n_bars_after_final_end_without_continuity` (warned per symbol, the §2F
+  hazard). A single combined counter fired 3,403 times at WO-0007 and was
+  a warning channel nobody would read. Untreated, a reverse split at the new company appears as a
   discontinuity in the old member's history and corrupts every 252-day
   momentum and relative-strength feature crossing it — the damage CI-2
   guards against for renames.
@@ -339,8 +381,9 @@ universe and within sector (`<feature>_pct`, `<feature>_pct_sector`).
 
 ### 6.1 Breadth (members of EQ_SPX)
 `composites` and every breadth field carry `n_members`,
-`n_members_with_bars` **and** `n_members_classified` per date, and the equal-weight composite is computed
-over members with bars. A breadth percentage is reported alongside its
+`n_members_with_bars`, `n_members_classified` **and** `n_members_flagged`
+per date (AMD-0019 §2A), and the equal-weight composite is computed
+over members with bars, excluding flagged symbol-days. A breadth percentage is reported alongside its
 coverage ratio, never bare. Where coverage on a date is below 95%, that
 date's breadth figures are flagged in `market_daily.coverage_flag` and
 excluded from PID-ARGUS-0004's lead-time study unless explicitly included.

@@ -322,6 +322,17 @@ change (AMD-0005).
    delta's bound is the Work Order's §2 Scope as verified by the Auditor's
    `scope_fidelity`, plus evidence and clerical paths. Any "the diff
    touches only …" file list in an earlier amendment is superseded.
+9. **Count and version assertions (AMD-0019 §2F).** A Work Order whose §2
+   adds or removes a table, or changes `SCHEMA_VERSION`, may update the
+   assertions that *count* those things — the table-count, `DESIGN_TABLES`
+   membership and schema-version assertions in `tests/test_schema.py` and
+   `tests/test_cli.py` — without that counting as a scope breach, under
+   ruling 6's three conditions. These assertions are arithmetic on the
+   mandated change, not independent behaviour: a Work Order that adds a
+   table and may not say so in the count test cannot leave the suite
+   green. The Delivery Controller records the edit in `spec-gaps.md` and
+   does **not** ask for a ruling. Any other change to those two files
+   remains a stop.
 
 ## 10. Public repository rules
 
