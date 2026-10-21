@@ -28,7 +28,8 @@ mirror; the Work Order file is authoritative.
 | [WO-0012](WO-0012-store-identity-and-vacuous-validation.md) | Store relocation safety (AMD-0017 §2A; the `validate.py` half moved to WO-0004 by AMD-0018 §2G) | WO-0004 (`SCHEMA_VERSION` 4 after WO-0004's 3) | P0-D2 — may run with WO-0007 | Approved |
 | [WO-0013](WO-0013-materialisation-basis-corrections.md) | Materialisation basis corrections: flags carried not subtracted, dividend basis measured, prices DOUBLE (AMD-0019) | WO-0007 (merged — this corrects it) | P0-E2 — may run with WO-0008 | Merged — accepted @ `df4b52d` |
 | [WO-0014](WO-0014-boundary-and-warning-corrections.md) | Boundary and warning corrections: same-company tails retained, publication allowlist, basis-normalised comparisons (AMD-0021) | WO-0013 (merged — this corrects it) | P0-F2 — may run with WO-0009 | **Accepted @ `6236748`** — merging |
-| [WO-0015](WO-0015-dividend-and-rename-diagnostics.md) | **Diagnostics only, changes nothing**: same-date dividend collapse; undeclared ticker renames (AMD-0025) | WO-0014 | P0-F3 — may run with WO-0009 | Approved |
+| [WO-0015](WO-0015-dividend-and-rename-diagnostics.md) | **Diagnostics only, changes nothing**: same-date dividend collapse; undeclared ticker renames (AMD-0025) | WO-0014 | P0-F3 — may run with WO-0009 | Merged — accepted @ `193ec5a` |
+| [WO-0016](WO-0016-dividend-record-identity.md) | Dividend record identity: attribute all 13 pairs, then fix both mechanisms (AMD-0027) | WO-0015 | P0-F4 — may run with WO-0009 | Approved |
 
 Execution order for the Delivery Controller: **WO-0001 + WO-0010
 concurrently** (P0-A) → **WO-0002** (P0-B, merged `bdce04d`) →
