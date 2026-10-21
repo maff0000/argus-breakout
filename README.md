@@ -45,6 +45,9 @@ Credential values are handed over in `/tmp` only (for example
 `/tmp/<provider>.txt`), moved into `.env` without being printed, and then
 shredded. Never place a credential file inside the repository working tree.
 
+Future direction — explicitly **not** approved scope — is in
+`docs/ROADMAP.md` (AMD-0024 §2F).
+
 This repository is public until project completion. No secrets,
 hostnames, ports, account identifiers or gateway details are ever
 committed; see `PID.md` §9.
