@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | In Progress |
+| **Status** | Closed |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §8.7 (`adjust materialise`) ; `DESIGN.md` §3.2 (`bars`, `etf_bars`), §3.3 (adjustment rule) |
 | **Applicable Amendments** | AMD-0002, AMD-0012, AMD-0014, AMD-0016, AMD-0018 |
 | **Base SHA** | 4321d92eeea6546a8095ecda3f22e5065837cae4 |

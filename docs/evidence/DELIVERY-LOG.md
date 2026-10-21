@@ -76,3 +76,7 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-21T00:54Z  WO-0012  Audited GREEN  whole-branch at 48eb7a5; evidence docs/evidence/WO-0012/
 2026-10-21T00:54Z  WO-0012  Accepted  delegated acceptance (AMD-0017 s3 less validate.py conditions); scope extension in test_schema/test_cli flagged for ratification
 2026-10-21T00:54Z  WO-0012  Closed  merged via PR
+2026-10-21T01:17Z  WO-0007  Implemented  Implementer commit 6232d8c merged with main; head dd8d830
+2026-10-21T01:17Z  WO-0007  Audited GREEN  whole-branch at dd8d830; evidence docs/evidence/WO-0007/
+2026-10-21T01:17Z  WO-0007  Accepted  delegated acceptance; AC2 shortfall (17 of 20, three misses excluded by AMD-0018 2F) in spec-defects.md, flagged for confirmation
+2026-10-21T01:17Z  WO-0007  Closed  merged via PR
