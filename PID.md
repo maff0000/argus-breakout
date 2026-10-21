@@ -35,24 +35,41 @@ recorded anywhere in this repository.
 
 ## 2. Purpose
 
-Argus-Breakout is a nightly, locally-run equity scanner over the S&P 500.
-It (1) detects sector rotation early from breadth, relative-strength and
-volume behaviour rather than price alone; (2) ranks constituents against
-an equal-weight index baseline and their own sector; (3) produces a short
-written brief from a local language model with long/research and
-short/avoid candidates; and (4) records every signal and brief so they can
-be graded against what happened next.
+Argus-Breakout is a nightly, locally-run **equity screener** over the
+S&P 500. Its primary function is to **identify individual equities worth
+trading** — long and short — and present them as a ranked list for the
+Product Owner to review. It does that through a **sector-rotation lens**:
+an equal-weight universe, breadth, relative strength and volume behaviour
+reveal where money is flowing, which **preferences** candidates and frames
+the list, but never determines membership of it (AMD-0023 §2A, AMD-0024).
 
-The problem it solves: rotation is noticed only after the leading sector
-has fallen 10–15% and the new leaders have already run.
+So it (1) computes stock-level trend, momentum, relative-strength,
+volatility, flow, structure and level features against an equal-weight
+index baseline and each stock's own sector; (2) ranks them into playbook
+lists with levels and stops; (3) detects sector rotation early from
+breadth and relative-strength momentum rather than price alone, and
+attaches that context to every candidate; (4) produces a short written
+brief from a local language model; and (5) records every signal and brief
+so they can be graded against what happened next.
+
+The problem it solves has two halves: finding tradeable setups nightly
+without reading 500 charts, and not learning about a rotation only after
+the leading sector has fallen 10–15% and the new leaders have already run.
+
+The equal weighting is chosen **so that** rotation is visible — the lens
+serves the list, not the reverse (AMD-0024 §1).
 
 ## 3. Target Outcome
 
 Each trading day, before the UK morning, a report exists on the delivery
-host containing: the market regime; an 11-sector rotation table with
-`EXIT_WARNING` / `ENTRY_WATCH` flags; ranked long and short/avoid
-candidate lists with levels, sizing for the paper account and earnings
-flags; and a ≤600-word brief whose every claim cites a metric in that
+host whose **deliverable** is **ranked long and short/trim/avoid candidate
+lists** — with levels, stops, support and resistance, sizing for the paper
+account, earnings flags, and each name tagged with its group's rotation
+state (AMD-0024 §2B). Framing that list, and leading the report as
+headline context per `DESIGN.md` §7.1: the market regime, an 11-sector
+rotation table with `EXIT_WARNING` / `ENTRY_WATCH` flags, and explicit
+**Rotating IN / Rotating OUT** groups each followed by their member
+tickers. Plus a ≤600-word brief whose every claim cites a metric in that
 night's evidence pack. Signals and briefs are graded automatically at 5,
 10 and 20 sessions. The Product Owner can see, in hindsight, the date each
 rotation signal fired relative to the sector's price peak.
@@ -78,9 +95,9 @@ Delivered in phases, each a Phase PID with its own Work Orders:
 | Phase PID | Title | Delivers |
 |---|---|---|
 | PID-ARGUS-0001 | Foundations | repo/tooling, DuckDB+Parquet store, universe & point-in-time membership, Polygon nightly ingest + 2y backfill, 10y bootstrap, FMP events/profiles, IBKR reconciliation & IV, nightly orchestration |
-| PID-ARGUS-0002 | Rotation Detector | equal-weight composites, breadth, RRG mechanics, sector internals, ratio z-scores, rotation score, regime label, Markdown/HTML report |
+| PID-ARGUS-0002 | **Screening Engine and Rotation Layer** | **the DESIGN §5 stock-feature layer with its cross-sectional percentiles**, equal-weight composites, breadth, RRG mechanics, sector internals, ratio z-scores, rotation score, regime label, **uncalibrated playbook candidate lists**, Markdown/HTML report per DESIGN §7.1 (AMD-0024 §2C — §5 previously belonged to no phase) |
 | PID-ARGUS-0003 | Brief & Query Surface | evidence pack, gateway client, nightly brief, grading tables, read-only MCP server over the store |
-| PID-ARGUS-0004 | Calibration & Lists | lead-time study, factor IC, threshold tuning, playbooks, ranked lists, paper-account sizing, IBKR watchlist push, paper trade log |
+| PID-ARGUS-0004 | Calibration & Lists | lead-time study, factor IC, threshold tuning, **final** playbook weights, paper-account sizing, IBKR watchlist push, paper trade log. Phase 0002 already produces a usable **uncalibrated** list, one phase earlier than the original plan (AMD-0024 §2C) |
 | PID-ARGUS-0005 | ML Ranking (optional) | gradient-boosted ranker with purged CV; deployed only if it beats the rules baseline out of sample |
 | PID-ARGUS-0006 | Containerisation | multi-stage Dockerfile (`uv sync --frozen --no-dev`), compose with `store/`+`out/` volumes and env-file, container scheduler, production deployment notes |
 
@@ -94,8 +111,22 @@ that phase (AMD-0004).
 
 - Live-account trading or order submission of any kind. The system writes
   nothing to IBKR except, in PID-ARGUS-0004, a named watchlist on the paper
-  account via the local gateway path.
-- News, transcripts or sentiment ingestion.
+  account via the local gateway path. **This is unchanged and absolute**
+  (AMD-0024 §2E): Argus-Breakout submits no order, to any account, ever.
+  The Product Owner's **`argus-execution-agent`** — which risk-sizes a
+  reviewed candidate and places the trade in the IBKR paper account — is a
+  **separate project** with its own repository, PID and safety design
+  (`docs/ROADMAP.md` §E). The boundary: Argus-Breakout emits a reviewed,
+  ranked list with levels and stops; sizing and order placement live wholly
+  outside it, and **no Work Order here may anticipate it**.
+- News, transcripts or sentiment ingestion **in phases 0001–0004**.
+  Deferred, not excluded (AMD-0024 §2D): the Product Owner has placed an
+  AI review of the nightly list, informed by news, as the final piece of
+  the product (`docs/ROADMAP.md` §D). Any such phase must carry a
+  **point-in-time timestamp rule** — a story may enter date D's evidence
+  only if its publication timestamp is at or before D's close — because
+  news without accurate timestamps is the most efficient way to put
+  look-ahead bias into a backtest and have it look like skill.
 - Intraday data or real-time streaming.
 - A served web dashboard (would be a new Phase PID with a new presentation
   target).
