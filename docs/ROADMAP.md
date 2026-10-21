@@ -20,6 +20,72 @@ whether it makes the nightly list better, not by whether it is interesting.
 
 ---
 
+## 0. Priority order and the research protocol (AMD-0028)
+
+**Binding, and recorded so it is not relitigated.** Everything below is
+read against this order:
+
+1. **Finish Phase 0** — trustworthy data. Eight Amendments in three days
+   corrected silent data defects, each of which would have produced a
+   confident wrong backtest.
+2. **PID-ARGUS-0002** — the §5 feature layer and composites.
+3. **The IC gate.** The factor-IC and lead-time studies gate everything
+   downstream: until a feature set carries information out of sample, net
+   of costs, **no threshold tuning, no playbook weighting, no sizing work
+   and no exit work is authorised.** A negative result closes the phase
+   honestly and is worth more than a tuned system nobody can trust.
+4. **Breadth before refinement.** Information ratio scales roughly as
+   IC × √breadth, and 10 concurrent positions is ~100–200 trades a year —
+   dominated by idiosyncratic variance for years whatever the exits do. The
+   lever is §A4, and the data already arrives nightly.
+5. **Sizing and portfolio volatility targeting.**
+6. **Exits, last**, in this order: vol-scaled stop → staged trailing →
+   partial exits → *measure the remaining prize* → only then a learned
+   **trim** policy.
+
+**Protocol for any study in phases 0004/0005** (DESIGN §9, AMD-0028 §2B):
+pre-register the hypothesis and the success bar in the Work Order before
+running; purged and embargoed walk-forward CV, because holding-horizon
+labels overlap; **count the trials and deflate for them** — the best of
+twenty backtests is not a discovery; model costs rather than assuming them
+away; compare against the dumbest adequate baseline; and carry coverage
+beside every figure (CI-8, R5's 46.4%).
+
+**Non-negotiables for any automated exit** (AMD-0028 §2D): the stop is
+**monotonic** — it never widens, or position sizing is fiction; the trail
+multiplier is bounded and the bound is not a model output; a hard
+per-position maximum loss no model may override; a portfolio drawdown halt
+and a kill switch that does not need the agent to be healthy; and every
+automated exit records the rule and inputs that fired it, because an exit
+nobody can explain cannot be told from a lucky one.
+
+### 0.1 On adaptive / AI-driven exits — sequenced, not rejected
+The strongest argument for automation is **not** the model. It is that
+**mechanising the decision removes the behavioural gap** — panic selling,
+chasing, and the disposition effect of cutting winners early while holding
+losers — which runs to whole percentage points a year and dwarfs anything
+a stop formula adds. That benefit arrives with a plain vol-scaled staged
+trail, needs no inference at all, and lands the moment there is an edge to
+execute.
+
+Two further findings worth keeping:
+- **Trim decisions are counterfactually evaluable; entries are not.** A
+  retail-scale position does not move the market, so every historical trade
+  can be re-priced under *every* trim schedule on the **same path**, with
+  no simulation feedback loop — and a trim fraction gives a graded outcome
+  where a binary exit gives one bit. **If inference is spent anywhere, spend
+  it on trims first.**
+- **Live validation is impossible at this breadth.** Unpaired, 100–200
+  trades a year cannot distinguish two exit rules; the standard error on a
+  year's mean is about the size of the mean. Paired comparison in
+  simulation can, which is why §2B's protocol is the only route.
+- **Measure the prize before building.** Run the playbooks over history with
+  a plain Chandelier exit and count the return left on the table by stops
+  hit on trades that then ran another 2R. One day's work; it tells you
+  whether the prize is 20bp or 2% before any model is written.
+
+---
+
 ## A. Data gaps worth closing
 
 ### A1. Short interest and short float — the real gap

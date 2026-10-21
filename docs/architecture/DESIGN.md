@@ -617,6 +617,34 @@ stop 1.5·ATR14 (long) / 2·ATR14 (short); position cap 10% of equity; max
   return attached at 5/10/20 sessions; rolling hit-rate in the report.
 
 ## 9. Backtesting and evaluation (PID-ARGUS-0004/0005)
+
+**Research protocol — binding on every Work Order in these phases
+(AMD-0028 §2B).** Six rules, and a study that breaks one is not evidence:
+
+1. **Pre-register.** The hypothesis, feature set, horizon and **the bar
+   that counts as success** go into the Work Order **before** the study
+   runs. A result reinterpreted afterwards is not evidence; an acceptance
+   criterion is this project's instrument for that, so the discipline costs
+   nothing.
+2. **Purged, embargoed walk-forward CV.** Holding-horizon labels overlap,
+   so ordinary k-fold leaks: purge training observations whose label window
+   intersects the test window, and embargo a gap after it.
+3. **Count the trials and deflate for them.** The number of configurations
+   tried is itself a parameter — the best of twenty backtests is not a
+   discovery. An undeflated Sharpe out of a search is not reportable.
+4. **Model costs.** Commission, spread at the traded size, slippage. A
+   result that does not survive costs did not happen.
+5. **Beat the dumbest adequate baseline.** Equal-weight buy-and-hold for
+   selection; a plain Chandelier exit for exits; a fixed fraction for
+   sizing. A model that cannot beat the trivial version is not a model.
+6. **Coverage travels with every figure** (CI-8): R5's 46.4%
+   delisted-member coverage is an input to every historical result and is
+   stated beside it, weighted rather than merely mentioned.
+
+**The IC study is a gate** (AMD-0028 §2A), not a deliverable: nothing
+downstream — thresholds, weights, sizing, exits — is authorised until a
+feature set carries information out of sample, net of costs.
+
 1. Lead-time study on sector ETFs (1998→) and composites: for every ≥10%
    relative drawdown, sessions between each §6 signal and the peak; keep
    signals with median lead ≥ 5 sessions and false-positive rate < 60%.
