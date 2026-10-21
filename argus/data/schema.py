@@ -9,7 +9,13 @@ with the quoted parquet glob under the configured store directory.
 """
 
 # 3: bar_flags (AMD-0018). 4: store_meta (AMD-0017/AMD-0018 2G, store relocation identity).
-SCHEMA_VERSION = 4
+# 5: dividends.basis (AMD-0019 2B); bars/etf_bars price columns DOUBLE on disk (AMD-0019 2C).
+SCHEMA_VERSION = 5
+
+DIVIDEND_BASES = ("as_paid", "split_adjusted")
+
+# Price columns of the parquet-backed bars / etf_bars tables (all float64 on disk).
+BAR_PRICE_COLUMNS = ("open", "high", "low", "close", "volume", "adj_close")
 
 _BAR_VIEW = (
     "CREATE OR REPLACE VIEW {name} AS SELECT {cols} "
@@ -61,7 +67,8 @@ DDL: dict[str, str] = {
         symbol TEXT, date DATE, ratio DOUBLE NOT NULL, source TEXT,
         PRIMARY KEY (symbol, date, source))""",
     "dividends": """CREATE TABLE IF NOT EXISTS dividends (
-        symbol TEXT, date DATE, cash_amount DOUBLE NOT NULL, source TEXT,
+        symbol TEXT, date DATE, cash_amount DOUBLE NOT NULL,
+        basis TEXT NOT NULL CHECK (basis IN ('as_paid', 'split_adjusted')), source TEXT,
         PRIMARY KEY (symbol, date, source))""",
     "bars": _BAR_VIEW.format(name="bars", cols=_BARS_CAST),
     "etf_bars": _BAR_VIEW.format(name="etf_bars", cols=_BARS_CAST),

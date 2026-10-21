@@ -246,6 +246,27 @@ def test_provider_failure_logged_failed(store, client, monkeypatch):
 
 
 @respx.mock
+def test_judge_failure_records_quarantined(store, client, monkeypatch):
+    """AMD-0019 2E: _judge raising AFTER the raw write is a quarantine (rows stored, unpublished),
+    so 'failed' stays reserved for nothing-fetched and the backfill never re-fetches the day."""
+    _grouped_route(lambda req: httpx.Response(200, json=GROUPED))
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("judge exploded")
+
+    monkeypatch.setattr("argus.data.ingest_polygon.validate_day", boom)
+    res = ingest_polygon_day(store, client, D)
+    assert res.status == "quarantined" and "judge exploded" in res.detail
+    row = _log(store, D).row(0, named=True)
+    assert row["status"] == "quarantined" and "judge exploded" in row["detail"]
+    assert _stored_count(store, D) == len(MEMBERS) + len(ETFS) == res.rows  # rows ARE stored
+    # the backfill resumes past it: no second fetch
+    calls = []
+    _grouped_route(lambda req: calls.append(1) or httpx.Response(200, json=GROUPED))
+    assert backfill_polygon(store, client, D, D) == [] and calls == []
+
+
+@respx.mock
 def test_one_member_jump_is_a_flag_not_a_quarantine(store, client):
     day1 = date(2026, 10, 15)
     _grouped_route(lambda req: httpx.Response(200, json=GROUPED))

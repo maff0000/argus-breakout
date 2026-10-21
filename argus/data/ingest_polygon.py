@@ -144,9 +144,15 @@ def ingest_polygon_day(store: Store, client: PolygonClient, d: date) -> IngestRe
                 pl.lit(client.source).alias("source"), pl.lit(client.basis).alias("basis")
             )
         )
-        return _judge(store, d, bars, extra=f" dropped_tickers={client.last_dropped}")
-    except Exception as exc:  # noqa: BLE001 - recorded as failed in ingest_log
+    except Exception as exc:  # noqa: BLE001 - nothing (reliably) stored: 'failed' is retried
         return _finish(store, d, IngestResult(0, "failed", f"{type(exc).__name__}: {exc}"))
+    try:
+        return _judge(store, d, bars, extra=f" dropped_tickers={client.last_dropped}")
+    except Exception as exc:  # noqa: BLE001 - the rows ARE stored and unpublished: quarantined
+        # AMD-0019 2E: 'failed' is reserved for nothing-fetched, so the backfill never re-fetches
+        # rows it already holds.
+        detail = f"judging failed after the raw write: {type(exc).__name__}: {exc}"
+        return _finish(store, d, IngestResult(bars.height, "quarantined", detail))
 
 
 def backfill_polygon(

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Approved |
+| **Status** | Closed |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` §8.5, §8.6 ; `DESIGN.md` §3.2, §3.3, §6.1 ; ADR-0003 |
 | **Applicable Amendments** | AMD-0012, AMD-0018, AMD-0019 |
 | **Base SHA** | main at the commit introducing AMD-0019 |

@@ -15,13 +15,14 @@ from argus.cli import app
 from argus.data.adjust import (
     apply_splits,
     dividend_adjusted_close,
+    equal_weight_aggregate,
     materialise,
     resolve_dividends,
     resolve_splits,
     select_source,
     source_disagreements,
 )
-from argus.data.store import Store
+from argus.data.store import Store, stamp_dividend_basis
 
 FIX = Path(__file__).parent / "fixtures" / "adjust"
 FAR = date(2100, 1, 1)
@@ -285,7 +286,10 @@ def test_dividend_adj_close_hand_values(store):
     raw = load("dividend_case")
     bars = raw.select("symbol", "date", "close")
     adj = dividend_adjusted_close(
-        bars, pl.DataFrame(DIVS, schema=["symbol", "date", "cash_amount", "source"], orient="row")
+        bars,
+        stamp_dividend_basis(
+            pl.DataFrame(DIVS, schema=["symbol", "date", "cash_amount", "source"], orient="row")
+        ),
     )
     expected = [
         100 * 0.9702, 102 * 0.9702, 104 * 0.9702,
@@ -319,8 +323,10 @@ def test_missing_prior_close_skips_dividend_with_warning():
         pl.Series("close", [100.0, None, 104.0, 106.0])
     )
     ex = date(2026, 3, 4)  # prior trading day (03-03) has no close
-    divs = pl.DataFrame([("MIS", ex, 2.0, "polygon")],
-                        schema=["symbol", "date", "cash_amount", "source"], orient="row")
+    divs = stamp_dividend_basis(
+        pl.DataFrame([("MIS", ex, 2.0, "polygon")],
+                     schema=["symbol", "date", "cash_amount", "source"], orient="row")
+    )
     warnings: list[str] = []
     adj = dividend_adjusted_close(bars, divs, warnings)
     assert adj.to_list() == [100.0, None, 104.0, 106.0]  # unchanged: dividend skipped
@@ -336,8 +342,10 @@ def test_missing_prior_close_skips_dividend_with_warning():
 
 def test_dividend_after_the_last_bar_waits():
     bars = raw_rows("LAT", [date(2026, 3, 2), date(2026, 3, 3)], 100.0)
-    divs = pl.DataFrame([("LAT", date(2026, 3, 9), 5.0, "polygon")],
-                        schema=["symbol", "date", "cash_amount", "source"], orient="row")
+    divs = stamp_dividend_basis(
+        pl.DataFrame([("LAT", date(2026, 3, 9), 5.0, "polygon")],
+                     schema=["symbol", "date", "cash_amount", "source"], orient="row")
+    )
     warnings: list[str] = []
     assert dividend_adjusted_close(bars, divs, warnings).to_list() == [100.0, 100.0]
     assert warnings == []
@@ -388,8 +396,11 @@ def test_reassigned_ticker_is_not_concatenated(store):
     out = bars_of(store, "OLD")
     assert out["date"].to_list() == first  # nothing after the final membership.end_date
     assert out["close"].to_list() == [50.0] * 3
-    warned = [w for w in report.warnings if w.startswith("bars_outside_membership OLD")]
-    assert len(warned) == 1 and "after_final_end=15" in warned[0] and "excluded=15" in warned[0]
+    warned = [
+        w for w in report.warnings if w.startswith("bars_after_final_end_without_continuity OLD")
+    ]
+    assert len(warned) == 1 and "after_final_end=15" in warned[0]
+    assert report.n_bars_after_final_end_without_continuity == 15
     # bars_raw keeps both companies' rows: it records what the provider served (CI-9)
     assert store.read("SELECT count(*) AS n FROM bars_raw WHERE symbol = 'OLD'")["n"][0] == 18
 
@@ -411,7 +422,9 @@ def test_outside_warning_needs_more_than_ten_days(tmp_path):
                        raw_rows("OLD", later, 5.0)])
         )
         report = materialise(s, None)
-        assert any(w.startswith("bars_outside_membership") for w in report.warnings) is warns
+        kind = "bars_after_final_end_without_continuity"
+        assert any(w.startswith(kind) for w in report.warnings) is warns
+        assert report.n_bars_after_final_end_without_continuity == n_after  # counted either way
         assert bars_of(s, "OLD").height == 3  # excluded either way
 
 
@@ -432,9 +445,9 @@ def test_rename_chain_stays_continuous(tmp_path):
     report = materialise(s, None)
     assert bars_of(s, "OLD")["date"].to_list() == old_days  # mapped forward: continuity, not cut
     assert bars_of(s, "NEW").height == 60
-    assert "excluded=0 rename_continuity=true" in next(
-        w for w in report.warnings if w.startswith("bars_outside_membership OLD")
-    )
+    # continuity suppresses the AMD-0018 2F hazard: nothing counted, nothing warned
+    assert report.n_bars_after_final_end_without_continuity == 0
+    assert not [w for w in report.warnings if w.startswith("bars_after_final_end")]
     # the old ticker's split is applied to the bars now stored under the new one as well
     new = bars_of(s, "NEW")
     assert new.filter(pl.col("date") < date(2026, 1, 20))["close"].unique().to_list() == [25.0]
@@ -490,7 +503,7 @@ def _flag(store, sym, d, flag, source="polygon"):
 SEAM_DAYS = weekdays(date(2026, 4, 6), 6)
 
 
-def test_quarantined_day_not_published(store):
+def test_quarantined_day_is_not_published(store):
     store.write_bars_raw(raw_rows("QQQ1", SEAM_DAYS, 10.0, "polygon"))
     for d in SEAM_DAYS:
         _verdict(store, d, "ok")
@@ -513,16 +526,55 @@ def test_latest_verdict_wins(store):
     assert bars_of(store, "QQQ1").height == 6
 
 
-def test_flagged_symbol_day_excluded_rest_remains(store):
+def test_flagged_symbol_day_is_published(store):
+    """AMD-0019 2A: a jump_unexplained flag is carried, never subtracted."""
     store.write_bars_raw(
         pl.concat([raw_rows("FLG", SEAM_DAYS, 10.0, "polygon"),
                    raw_rows("OTH", SEAM_DAYS, 20.0, "polygon")])
     )
     _flag(store, "FLG", SEAM_DAYS[3], "jump_unexplained")
     report = materialise(store, None)
-    assert bars_of(store, "FLG")["date"].to_list() == [d for d in SEAM_DAYS if d != SEAM_DAYS[3]]
-    assert bars_of(store, "OTH").height == 6  # same day, other symbol: untouched
-    assert report.n_symbol_days_flag_excluded == 1 and report.n_days_quarantined_skipped == 0
+    assert bars_of(store, "FLG")["date"].to_list() == SEAM_DAYS  # the flagged day is present
+    assert bars_of(store, "OTH").height == 6
+    joined = store.read(
+        "SELECT b.date, f.flag FROM bars b JOIN bar_flags f "
+        "ON f.symbol = b.symbol AND f.date = b.date WHERE b.symbol = 'FLG'"
+    )
+    assert joined.rows() == [(SEAM_DAYS[3], "jump_unexplained")]  # joinable, as the DESIGN says
+    assert report.n_symbol_days_flag_excluded == 0 and report.n_days_quarantined_skipped == 0
+    assert report.n_symbol_days_flagged == 1
+    assert report.n_members_flagged_by_date == {SEAM_DAYS[3]: 1}
+
+
+def test_no_cross_source_substitution(store):
+    """Polygon flagged on D and yfinance holding D: the published row is Polygon's."""
+    poly = raw_rows("MIX", SEAM_DAYS, 10.0, "polygon")
+    yf = raw_rows("MIX", SEAM_DAYS, 11.0, "yfinance")  # a distinguishable close
+    store.write_bars_raw(pl.concat([poly, yf]))
+    _flag(store, "MIX", SEAM_DAYS[3], "jump_unexplained")
+    materialise(store, None)
+    out = bars_of(store, "MIX")
+    assert out["date"].to_list() == SEAM_DAYS
+    assert out["close"].to_list() == [10.0] * 6  # every row, the flagged day included, is Polygon's
+
+
+def test_quarantine_is_not_filled_from_yfinance(store):
+    store.write_bars_raw(
+        pl.concat([raw_rows("MIX", SEAM_DAYS, 10.0, "polygon"),
+                   raw_rows("MIX", SEAM_DAYS, 11.0, "yfinance")])
+    )
+    _verdict(store, SEAM_DAYS[1], "quarantined")
+    materialise(store, None)
+    out = bars_of(store, "MIX")
+    assert out["date"].to_list() == [d for d in SEAM_DAYS if d != SEAM_DAYS[1]]
+    assert set(out["close"].to_list()) == {10.0}
+
+
+def test_failed_verdict_does_not_withhold(store):
+    store.write_bars_raw(raw_rows("QQQ1", SEAM_DAYS, 10.0, "polygon"))
+    _verdict(store, SEAM_DAYS[1], "failed")  # 'failed' = nothing fetched; only 'quarantined' holds
+    assert materialise(store, None).n_days_quarantined_skipped == 0
+    assert bars_of(store, "QQQ1").height == 6
 
 
 def test_split_reconciled_flag_does_not_exclude(store):
@@ -541,17 +593,6 @@ def test_day_without_verdict_is_published(store):
     assert bars_of(store, "NOV").height == 6 and report.n_days_quarantined_skipped == 0
 
 
-def test_quarantine_does_not_withhold_yfinance_row(store):
-    store.write_bars_raw(
-        pl.concat([raw_rows("MIX", SEAM_DAYS, 10.0, "polygon"),
-                   raw_rows("MIX", SEAM_DAYS, 10.0, "yfinance")])
-    )
-    _verdict(store, SEAM_DAYS[1], "quarantined")
-    materialise(store, None)
-    out = bars_of(store, "MIX")
-    assert out.height == 6  # the day is published from yfinance, which has no verdict against it
-
-
 def test_seam_rerun_is_a_no_op(store):
     store.write_bars_raw(raw_rows("QQQ1", SEAM_DAYS, 10.0, "polygon"))
     _verdict(store, SEAM_DAYS[2], "quarantined")
@@ -559,9 +600,9 @@ def test_seam_rerun_is_a_no_op(store):
     first = materialise(store, None)
     before = digest(store, "bars", "QQQ1")
     second = materialise(store, None)
-    assert first.n_rows == 4 and (second.n_rows, second.n_readjusted) == (0, 0)
+    assert first.n_rows == 5 and (second.n_rows, second.n_readjusted) == (0, 0)
     assert digest(store, "bars", "QQQ1") == before
-    assert second.n_days_quarantined_skipped == 1 and second.n_symbol_days_flag_excluded == 1
+    assert second.n_days_quarantined_skipped == 1 and second.n_symbol_days_flagged == 1
 
 
 def test_newly_quarantined_day_readjusts_published_history(store):
@@ -601,3 +642,243 @@ def test_cli_materialise(clean_env, tmp_path):
     assert "symbols=1 rows=0 readjusted=0" in again.output
     bad = runner.invoke(app, ["adjust", "materialise", "--symbols", "AAA,not valid"])
     assert bad.exit_code == 2
+
+
+# ------------------------------------------------------------------------------ dividend basis
+def _basis_case(store, sym, source, amount):
+    """Eight bars at 100 (fetched before a 2:1 split dated after them) and one dividend paid on
+    the fifth; after the split the prior close is 50, so the dividend must be worth 0.50."""
+    days = weekdays(date(2026, 3, 2), 8)
+    store.write_bars_raw(raw_rows(sym, days, 100.0, source, ingested=datetime(2026, 3, 20, 6, 0)))
+    put_splits(store, [(sym, date(2026, 4, 1), 2.0, source)])
+    put_dividends(store, [(sym, days[4], amount, source)])
+    return days
+
+
+def test_as_paid_dividend_is_divided_by_cumulative_split(store):
+    _basis_case(store, "ASP", "polygon", 1.00)  # as paid, pre-split share count
+    _basis_case(store, "SAD", "yfinance", 0.50)  # already restated onto the split-adjusted basis
+    assert stamp_dividend_basis(
+        pl.DataFrame({"source": ["polygon", "yfinance"]})
+    )["basis"].to_list() == ["as_paid", "split_adjusted"]
+    materialise(store, None)
+    asp, sad = bars_of(store, "ASP"), bars_of(store, "SAD")
+    assert asp["close"].to_list() == [50.0] * 8
+    # factor 1 - 0.50/50 = 0.99 for the four bars before the ex-date; an undivided 1.00 would
+    # give 0.98 (49.0)
+    expected = [49.5] * 4 + [50.0] * 4
+    assert asp["adj_close"].to_list() == pytest.approx(expected, abs=1e-9)
+    assert sad["adj_close"].to_list() == pytest.approx(expected, abs=1e-9)
+    assert asp["adj_close"].to_list() == sad["adj_close"].to_list()  # same arithmetic result
+
+
+def test_as_paid_dividend_after_the_split_is_not_divided():
+    """Only splits dated AFTER the ex-date count (split_cum is 1 for the later bars)."""
+    days = weekdays(date(2026, 3, 2), 6)
+    raw = raw_rows("LAT", days, 100.0, "polygon", ingested=datetime(2026, 3, 1, 6, 0))
+    splits = pl.DataFrame([("LAT", days[1], 2.0, "polygon")],
+                          schema=["symbol", "date", "ratio", "source"], orient="row")
+    adjusted = apply_splits(raw, splits, 1)
+    divs = stamp_dividend_basis(
+        pl.DataFrame([("LAT", days[4], 1.0, "polygon")],
+                     schema=["symbol", "date", "cash_amount", "source"], orient="row")
+    )
+    adj = dividend_adjusted_close(adjusted, divs)
+    # bars from days[1] on are 100 (the split took effect before them); 1/100 -> factor 0.99
+    assert adj.to_list()[-1] == pytest.approx(100.0)
+    assert adj.to_list()[1] == pytest.approx(99.0)
+
+
+def test_unrecorded_dividend_basis_raises(store):
+    bars = raw_rows("BAS", weekdays(date(2026, 3, 2), 4), 100.0)
+    ex = date(2026, 3, 4)
+    base = pl.DataFrame([("BAS", ex, 1.0, "polygon")],
+                        schema=["symbol", "date", "cash_amount", "source"], orient="row")
+    for bad in (None, "", "adjusted", "AS_PAID"):
+        with pytest.raises(ValueError, match="basis"):
+            dividend_adjusted_close(
+                bars, base.with_columns(pl.lit(bad, dtype=pl.String).alias("basis"))
+            )
+    with pytest.raises(ValueError, match="basis"):  # no column at all: never defaulted
+        dividend_adjusted_close(bars, base)
+    # and the write path refuses a source whose basis was never measured
+    with pytest.raises(ValueError, match="measured dividend basis"):
+        put_dividends(store, [("BAS", ex, 1.0, "fmp")])
+    assert store.read("SELECT count(*) AS n FROM dividends")["n"][0] == 0
+    with pytest.raises(ValueError, match="disagrees"):
+        store.upsert(
+            "dividends",
+            base.with_columns(pl.lit("split_adjusted").alias("basis")),
+            ["symbol", "date", "source"],
+        )
+
+
+# ------------------------------------------------------------------------------ DOUBLE prices
+def test_prices_are_float64(store):
+    store.upsert(
+        "symbols",
+        pl.DataFrame({"symbol": ["SPY", "AAA"], "gics_sector": ["ETF", "Technology"]}),
+        ["symbol"],
+    )
+    days = weekdays(date(2026, 1, 5), 3)
+    exact = 187.12345678901234  # not representable in float32 (relative error ~1e-8)
+    store.write_bars_raw(
+        pl.concat(
+            [raw_rows("SPY", days, exact, "polygon"), raw_rows("AAA", days, exact, "polygon")]
+        )
+    )
+    materialise(store, None)
+    cols = ["open", "high", "low", "close", "volume", "adj_close"]
+    for etf, sym in ((False, "AAA"), (True, "SPY")):
+        out = bars_of(store, sym, etf=etf)
+        assert [out.schema[c] for c in cols] == [pl.Float64] * 6
+        assert out["close"].to_list() == [exact] * 3  # bit-exact round trip
+        assert out["adj_close"].to_list() == [exact] * 3
+        table = "etf_bars" if etf else "bars"
+        on_disk = pl.read_parquet(store.parquet_dir / table / f"symbol={sym}" / "part.parquet")
+        assert [on_disk.schema[c] for c in cols] == [pl.Float64] * 6
+    raw_close = store.read("SELECT close FROM bars_raw WHERE symbol = 'AAA'")["close"].to_list()
+    assert raw_close == [exact] * 3
+
+
+# ------------------------------------------------------------------------------ membership edge
+def test_membership_boundary_counts_are_separated(tmp_path):
+    s = make_store(tmp_path)
+    # PRE: bars start 20 days before the member joined; they are history the features need
+    put_membership(s, "PRE", date(2026, 2, 2), None)
+    pre_days = weekdays(date(2026, 1, 5), 30)
+    n_before = len([d for d in pre_days if d < date(2026, 2, 2)])
+    # OLD: delisted, and 12 bars from a successor company follow its final end_date
+    put_membership(s, "OLD", date(2020, 1, 1), date(2026, 1, 6))
+    s.write_bars_raw(
+        pl.concat([raw_rows("PRE", pre_days, 10.0),
+                   raw_rows("OLD", weekdays(date(2026, 1, 2), 3), 50.0),
+                   raw_rows("OLD", weekdays(date(2026, 2, 2), 12), 5.0)])
+    )
+    report = materialise(s, None)
+    assert bars_of(s, "PRE").height == 30  # leading history is retained
+    assert report.n_bars_before_first_membership == n_before and n_before > 10
+    assert report.n_bars_after_final_end_without_continuity == 12
+    assert [w for w in report.warnings if "PRE" in w] == []  # pre-entry history never warns
+    warned = [w for w in report.warnings if w.startswith("bars_after_final_end_without_continuity")]
+    assert len(warned) == 1 and warned[0].split()[1] == "OLD"  # warned per symbol, named
+    assert not any(w.startswith("bars_outside_membership") for w in report.warnings)
+
+
+# ------------------------------------------------------------------------------ aggregates
+def test_flagged_day_excluded_from_aggregate_not_series(store):
+    days = weekdays(date(2026, 4, 6), 3)
+    # AAA +10% on day 2 (flagged), BBB +2%, CCC +4%
+    frames = [
+        raw_rows(sym, days, 1.0).with_columns(pl.Series("close", [100.0, c1, c2]))
+        for sym, c1, c2 in (("AAA", 110.0, 110.0), ("BBB", 102.0, 102.0), ("CCC", 104.0, 104.0))
+    ]
+    store.write_bars_raw(pl.concat(frames).with_columns(pl.col("source")))
+    _flag(store, "AAA", days[1], "jump_unexplained")
+    materialise(store, None)
+    published = store.read_bars(None, LONG_AGO, FAR)
+    assert published.filter(pl.col("symbol") == "AAA").height == 3  # the series keeps its row
+    flagged = store.read("SELECT symbol, date FROM bar_flags")
+    agg = equal_weight_aggregate(published, flagged).filter(pl.col("date") == days[1])
+    row = agg.row(0, named=True)
+    assert row["n_members_flagged"] == 1 and row["n_members_with_bars"] == 3
+    assert row["n_members_included"] == 2
+    assert row["eq_ret"] == pytest.approx((0.02 + 0.04) / 2)  # AAA's +10% is not in the mean
+    other = equal_weight_aggregate(published, flagged).filter(pl.col("date") == days[2])
+    assert other["n_members_flagged"].to_list() == [0] and other["eq_ret"][0] == pytest.approx(0.0)
+
+
+# ------------------------------------------------------------------------------ schema 5 migration
+def _checksum(store, table):
+    h = hashlib.sha256()
+    for path in sorted((store.parquet_dir / table).rglob("*.parquet")):
+        h.update(path.relative_to(store.parquet_dir).as_posix().encode())
+        h.update(path.read_bytes())
+    return h.hexdigest()
+
+
+def _legacy_store(tmp_path):
+    """A schema-4 store: old dividends table (no basis), float32 bars, a populated bars_raw."""
+    import duckdb
+
+    s = make_store(tmp_path)
+    days = weekdays(date(2026, 3, 2), 6)
+    s.write_bars_raw(
+        pl.concat([raw_rows("AAA", days, 12.345678901, "polygon"),
+                   raw_rows("AAA", days, 12.345678901, "yfinance")])
+    )
+    materialise(s, None)
+    path = s.parquet_dir / "bars" / "symbol=AAA" / "part.parquet"
+    narrow = pl.read_parquet(path).cast(
+        {c: pl.Float32 for c in ("open", "high", "low", "close", "volume", "adj_close")}
+    )
+    narrow.write_parquet(path)
+    con = duckdb.connect(str(s.db_path))
+    con.execute("DROP TABLE dividends")
+    con.execute(
+        "CREATE TABLE dividends (symbol TEXT, date DATE, cash_amount DOUBLE NOT NULL, source TEXT, "
+        "PRIMARY KEY (symbol, date, source))"
+    )
+    con.execute(
+        "INSERT INTO dividends VALUES ('AAA', ?, 0.5, 'polygon'), ('AAA', ?, 0.25, 'yfinance')",
+        [days[2], days[2]],
+    )
+    con.execute("DELETE FROM schema_version WHERE version = 5")
+    con.close()
+    return s
+
+
+def test_migrate_store_is_in_place_idempotent_and_leaves_bars_raw_alone(tmp_path):
+    s = _legacy_store(tmp_path)
+    raw_before = _checksum(s, "bars_raw")
+    rows = {t: (b, a) for t, b, a in s.migrate()}
+    assert rows["dividends"] == (2, 2) and rows["bars_raw"] == (12, 12) and rows["bars"] == (6, 6)
+    got = s.read("SELECT source, basis FROM dividends ORDER BY source")
+    assert got.rows() == [("polygon", "as_paid"), ("yfinance", "split_adjusted")]
+    on_disk = pl.read_parquet(s.parquet_dir / "bars" / "symbol=AAA" / "part.parquet")
+    assert set(on_disk.select(pl.exclude("symbol", "date", "adj_version")).schema.values()) == {
+        pl.Float64
+    }
+    assert _checksum(s, "bars_raw") == raw_before  # CI-9: bars_raw is byte-identical
+    versions = s.read("SELECT version FROM schema_version ORDER BY version")["version"].to_list()
+    assert versions[-1] == 5
+    # a second run changes nothing
+    bars_sum, div_rows = _checksum(s, "bars"), s.read("SELECT * FROM dividends").rows()
+    again = {t: (b, a) for t, b, a in s.migrate()}
+    assert again == {t: (after, after) for t, (_before, after) in rows.items()}
+    assert _checksum(s, "bars") == bars_sum and s.read("SELECT * FROM dividends").rows() == div_rows
+    assert _checksum(s, "bars_raw") == raw_before
+    # re-materialising from the stored data now restores full precision
+    materialise(s, None)
+    assert bars_of(s, "AAA")["close"].to_list() == [12.345678901] * 6
+
+
+def test_migrate_store_refuses_an_unmeasured_source_and_changes_nothing(tmp_path):
+    import duckdb
+
+    s = _legacy_store(tmp_path)
+    con = duckdb.connect(str(s.db_path))
+    con.execute("INSERT INTO dividends VALUES ('AAA', DATE '2026-03-03', 1.0, 'fmp')")
+    con.close()
+    with pytest.raises(ValueError, match="measured dividend basis"):
+        s.migrate()
+    cols = s.read(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'dividends'"
+    )["column_name"].to_list()
+    assert "basis" not in cols and s.read("SELECT count(*) AS n FROM dividends")["n"][0] == 3
+
+
+def test_cli_migrate_store(clean_env, tmp_path):
+    s = _legacy_store(tmp_path)
+    clean_env.setenv("ARGUS_STORE_DIR", str(tmp_path / "store"))
+    res = CliRunner().invoke(app, ["migrate-store"])
+    assert res.exit_code == 0, res.output
+    assert "schema 5" in res.output and "dividends: 2 -> 2" in res.output
+    assert "bars_raw: 12 -> 12" in res.output
+    assert s.read("SELECT count(*) AS n FROM dividends WHERE basis IS NULL")["n"][0] == 0
+
+
+def test_store_has_a_single_logging_channel():
+    import argus.data.store as store_module
+
+    assert not hasattr(store_module, "_stdlog")  # AMD-0019 2H: structlog (redacted) only

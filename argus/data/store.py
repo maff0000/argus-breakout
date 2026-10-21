@@ -7,7 +7,6 @@ SQL is (a) table/column identifiers validated against the schema and quoted,
 and (b) the store-derived parquet glob, with quotes doubled.
 """
 
-import logging
 import os
 import tempfile
 from datetime import UTC, date, datetime
@@ -21,7 +20,6 @@ from argus.data import schema
 from argus.data.tickers import is_valid
 
 log = structlog.get_logger()
-_stdlog = logging.getLogger(__name__)
 
 DB_NAME = "argus.duckdb"
 _EMPTY_YEAR = "year=1900"
@@ -52,6 +50,30 @@ _BARS_POLARS = {
     "adj_version": pl.Int32,
 }
 _BASES = {"unadjusted", "split", "split_div"}
+
+# Whether each source's dividend `cash_amount` is on the share count of the ex-date ('as_paid')
+# or already restated onto the current basis ('split_adjusted'). MEASURED on the stored data
+# (WO-0013, docs/evidence/WO-0013/dividend-basis.md), never assumed (AMD-0019 2B). The one place
+# the mapping lives: the write path (`Store.upsert`) and the schema-5 migration both use it.
+DIVIDEND_BASIS_BY_SOURCE: dict[str, str] = {"polygon": "as_paid", "yfinance": "split_adjusted"}
+
+
+def dividend_basis(source: str | None) -> str:
+    """The basis of a source's dividend amounts; an unknown source RAISES (never a default)."""
+    try:
+        return DIVIDEND_BASIS_BY_SOURCE[source]  # type: ignore[index]
+    except KeyError:
+        raise ValueError(f"no measured dividend basis for source {source!r}") from None
+
+
+def stamp_dividend_basis(df: pl.DataFrame) -> pl.DataFrame:
+    """Add `basis` from each row's `source`; a supplied `basis` must agree with it."""
+    if "source" not in df.columns:
+        raise ValueError("dividends need a source column to carry a basis")
+    basis = pl.Series("basis", [dividend_basis(s) for s in df["source"].to_list()], dtype=pl.String)
+    if "basis" in df.columns and not df["basis"].equals(basis):
+        raise ValueError("dividends.basis disagrees with the measured basis of its source")
+    return df.with_columns(basis)
 
 
 class StoreRelocatedError(RuntimeError):
@@ -136,7 +158,7 @@ class Store:
             con.execute("ROLLBACK")
             raise
         self.repaired_from = recorded
-        _stdlog.warning("store relocated: recorded %r, now %r; views recreated", recorded, current)
+        log.warning("store_relocated", recorded=recorded, current=current, action="views_recreated")
 
     def _create_views(self, con: duckdb.DuckDBPyConnection) -> None:
         for name in schema.VIEWS:
@@ -181,6 +203,7 @@ class Store:
         con = self.connect()
         try:
             con.execute("BEGIN")
+            self._add_dividend_basis(con)
             for name, ddl in schema.DDL.items():
                 if name not in schema.VIEWS:
                     con.execute(ddl)
@@ -197,6 +220,81 @@ class Store:
             raise
         finally:
             con.close()
+
+    def _add_dividend_basis(self, con: duckdb.DuckDBPyConnection) -> bool:
+        """Schema 5: rebuild a pre-5 `dividends` table with `basis`, backfilled per source.
+
+        Idempotent (a table that already has `basis` is left alone); runs inside the caller's
+        transaction; all-or-nothing: an unknown source raises before anything is dropped.
+        Returns True when it rebuilt the table."""
+        cols = [
+            r[0]
+            for r in con.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'main' AND table_name = 'dividends'"
+            ).fetchall()
+        ]
+        if not cols or "basis" in cols:
+            return False
+        old = con.execute("SELECT symbol, date, cash_amount, source FROM dividends").pl()
+        filled = stamp_dividend_basis(old).select(
+            "symbol", "date", "cash_amount", "basis", "source"
+        )
+        con.execute("DROP TABLE dividends")
+        con.execute(schema.DDL["dividends"])
+        con.register("old_dividends", filled.to_arrow())
+        try:
+            con.execute(
+                "INSERT INTO dividends (symbol, date, cash_amount, basis, source) "
+                "SELECT symbol, date, cash_amount, basis, source FROM old_dividends"
+            )
+        finally:
+            con.unregister("old_dividends")
+        return True
+
+    def migrate(self) -> list[tuple[str, int, int]]:
+        """Bring a store up to the current schema in place, from stored data only (WO-0013).
+
+        Rebuilds `dividends` with a backfilled `basis`, widens any float32 price column of the
+        `bars` / `etf_bars` parquet to float64, records the schema version. Never reads or writes
+        `bars_raw` beyond a row count. Idempotent. Returns (table, rows_before, rows_after)."""
+        self.connect().close()  # a read-write connect first repairs a relocated COPY's views
+        before = self._row_counts()
+        self.init_schema()  # includes the dividends rebuild, transactionally
+        for sub in ("bars", "etf_bars"):
+            self._widen_parquet(sub)
+        return [(t, n, self._row_counts()[t]) for t, n in before.items()]
+
+    def _row_counts(self) -> dict[str, int]:
+        con = self.connect(read_only=True)
+        try:
+            names = [
+                r[0]
+                for r in con.execute(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = 'main' ORDER BY table_name"
+                ).fetchall()
+            ]
+            return {
+                n: con.execute("SELECT count(*) FROM " + _quote_ident(n)).fetchone()[0]  # noqa: S608
+                for n in names
+            }
+        finally:
+            con.close()
+
+    def _widen_parquet(self, sub: str) -> int:
+        """Rewrite (atomically) any `<sub>` parquet file holding a float32 price column."""
+        n = 0
+        for path in sorted((self.parquet_dir / sub).rglob("*.parquet")):
+            cols = [
+                c for c, t in pl.read_parquet_schema(path).items()
+                if c in schema.BAR_PRICE_COLUMNS and t == pl.Float32
+            ]
+            if cols:
+                df = pl.read_parquet(path).cast({c: pl.Float64 for c in cols})
+                _atomic_write_parquet(df, path)
+                n += 1
+        return n
 
     # ------------------------------------------------------------------ generic access
     def read(self, sql: str, params: list | None = None) -> pl.DataFrame:
@@ -215,6 +313,8 @@ class Store:
             return 0
         if "symbol" in df.columns:
             _check_symbols(df["symbol"].to_list())
+        if table == "dividends":
+            df = stamp_dividend_basis(df)  # every dividends row carries its source's basis
         con = self.connect()
         try:
             known = [
