@@ -7,6 +7,7 @@ SQL is (a) table/column identifiers validated against the schema and quoted,
 and (b) the store-derived parquet glob, with quotes doubled.
 """
 
+import logging
 import os
 import tempfile
 from datetime import UTC, date, datetime
@@ -20,6 +21,7 @@ from argus.data import schema
 from argus.data.tickers import is_valid
 
 log = structlog.get_logger()
+_stdlog = logging.getLogger(__name__)
 
 DB_NAME = "argus.duckdb"
 _EMPTY_YEAR = "year=1900"
@@ -50,6 +52,10 @@ _BARS_POLARS = {
     "adj_version": pl.Int32,
 }
 _BASES = {"unadjusted", "split", "split_div"}
+
+
+class StoreRelocatedError(RuntimeError):
+    """The store was copied/moved: its recorded directory differs from the one in use."""
 
 
 def _utcnow() -> datetime:
@@ -87,12 +93,67 @@ class Store:
         # Only `resolve_symbol` reads config; None means settings.argus_config_dir at call time.
         self._config_dir = None if config_dir is None else Path(config_dir)
         self._rename_chain: dict[str, str] | None = None
+        # Set to the previously recorded store_dir when a read-write connect repaired a relocation.
+        self.repaired_from: str | None = None
 
     # ------------------------------------------------------------------ connection
     def connect(self, read_only: bool = False) -> duckdb.DuckDBPyConnection:
         if not read_only:
             self._ensure_store_dir()
-        return duckdb.connect(str(self.db_path), read_only=read_only)
+        con = duckdb.connect(str(self.db_path), read_only=read_only)
+        try:
+            self._check_identity(con, read_only)
+        except BaseException:
+            con.close()
+            raise
+        return con
+
+    def _check_identity(self, con: duckdb.DuckDBPyConnection, read_only: bool) -> None:
+        """Compare the recorded store_dir with the one in use (one small local SELECT)."""
+        try:
+            row = con.execute(
+                "SELECT value FROM store_meta WHERE key = ?", ["store_dir"]
+            ).fetchone()
+        except duckdb.CatalogException:
+            return  # brand-new store, or one created before schema 4: first use
+        if row is None:
+            return
+        recorded, current = row[0], str(self.store_dir.resolve())
+        if recorded == current:
+            return
+        if read_only:
+            raise StoreRelocatedError(
+                f"store relocated: recorded {recorded!r}, now {current!r}; "
+                "a read-write `argus init-store` repairs it"
+            )
+        self._ensure_parquet_dirs()
+        con.execute("BEGIN")
+        try:
+            self._create_views(con)
+            self._record_store_dir(con)
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+        self.repaired_from = recorded
+        _stdlog.warning("store relocated: recorded %r, now %r; views recreated", recorded, current)
+
+    def _create_views(self, con: duckdb.DuckDBPyConnection) -> None:
+        for name in schema.VIEWS:
+            literal = "\x27" + self._glob(name).replace("\x27", "\x27\x27") + "\x27"
+            con.execute(schema.DDL[name].replace("__GLOB__", literal))
+
+    def _record_store_dir(self, con: duckdb.DuckDBPyConnection) -> None:
+        con.execute(
+            "INSERT INTO store_meta VALUES (?, ?) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            ["store_dir", str(self.store_dir.resolve())],
+        )
+
+    def recorded_store_dir(self) -> str | None:
+        """The store_dir recorded in store_meta (None if absent)."""
+        df = self.read("SELECT value FROM store_meta WHERE key = ?", ["store_dir"])
+        return df["value"][0] if df.height else None
 
     def _ensure_store_dir(self) -> None:
         if not self.store_dir.exists():
@@ -121,10 +182,10 @@ class Store:
         try:
             con.execute("BEGIN")
             for name, ddl in schema.DDL.items():
-                if name in schema.VIEWS:
-                    literal = "\x27" + self._glob(name).replace("\x27", "\x27\x27") + "\x27"
-                    ddl = ddl.replace("__GLOB__", literal)
-                con.execute(ddl)
+                if name not in schema.VIEWS:
+                    con.execute(ddl)
+            self._create_views(con)
+            self._record_store_dir(con)
             con.execute(
                 "INSERT INTO schema_version SELECT ?, ? "
                 "WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version = ?)",
