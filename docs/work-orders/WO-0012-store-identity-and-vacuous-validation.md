@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | In Progress |
+| **Status** | Closed |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` §8.5 ; `DESIGN.md` §3.2, §3.3 ; ADR-0008 |
 | **Applicable Amendments** | AMD-0017, AMD-0018 |
 | **Base SHA** | 4321d92eeea6546a8095ecda3f22e5065837cae4 |
