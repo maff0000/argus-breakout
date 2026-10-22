@@ -30,8 +30,10 @@ argus/data/providers/ibkr.py         modify  AMD-0021 §2E — PAPER-ACCOUNT ASS
                                              file; WO-0014 does not, so the two stay concurrent
 argus/data/schema.py                 modify  AMD-0033 §2B — events: add `first_seen DATE NOT NULL`,
                                              `last_seen DATE NOT NULL`; key unchanged (symbol, date, type); bump
-                                             SCHEMA_VERSION to 8 (WO-0017 takes 7; the version is a monotonic
-                                             marker, so a gap from out-of-order merges is harmless)
+                                             SCHEMA_VERSION to **7**. This lands FIRST (tonight), so it takes 7 and
+                                             WO-0017 takes 8 — if events took 8, WO-0017's "bump to 7" would see a
+                                             store already at 7, conclude it was done, and SILENTLY SKIP the
+                                             dividend columns
 argus/events/earnings.py             modify  AMD-0033 §2B — URGENT, lands before the first nightly run. On insert
                                              set first_seen = last_seen = the refresh date. On a row the calendar
                                              still carries, extend last_seen ONLY — never rewrite date, time_of_day

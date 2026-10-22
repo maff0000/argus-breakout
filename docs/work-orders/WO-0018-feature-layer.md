@@ -82,8 +82,9 @@ argus/commands/features_cmds.py create  `features compute --start D [--end D] [-
                                           added to argus/cli.py's append-only block (AMD-0002)
 argus/data/schema.py            modify  `features` DDL per DESIGN §3.2 — one column per §5 feature plus one
                                           *_pct and one *_pct_sector each; bump SCHEMA_VERSION to 9
-                                          (7 is WO-0017's, 8 is WO-0009's; the version is a monotonic marker
-                                          and a gap from out-of-order merges is harmless)
+                                          (7 is WO-0009's events migration, 8 is WO-0017's — a migration must
+                                          never find the store already at its own target version, or it skips
+                                          silently)
 tests/fixtures/features/*.parquet  create  the §5 golden fixtures (see §5)
 tests/test_features_*.py        create  one module per factor group; see §5
 tests/test_percentiles.py       create  see §5

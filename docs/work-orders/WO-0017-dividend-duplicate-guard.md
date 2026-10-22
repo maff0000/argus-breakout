@@ -34,7 +34,9 @@ collapsing:
 ```
 argus/data/schema.py            modify  dividends: add `declaration_date DATE NULL`, `frequency INT NULL`;
                                           PK unchanged (symbol, date, source, vendor_id);
-                                          bump SCHEMA_VERSION to 7
+                                          bump SCHEMA_VERSION to **8** (reassigned from 7: WO-0009's events
+                                          migration lands first and takes 7, and a migration that finds the
+                                          store already at its target version would skip silently)
 argus/data/providers/polygon.py modify  dividends(): carry `declaration_date` and `frequency` through from the
                                           payload (both present on every record — WO-0015 evidence)
 argus/data/providers/bootstrap.py modify  yfinance: both fields NULL (not supplied)
