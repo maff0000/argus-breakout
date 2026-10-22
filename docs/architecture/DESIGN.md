@@ -340,11 +340,20 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
   placing unresolved `jump_unexplained` flags first (AMD-0019 §3). Every
   comparison is written to `reconcile_log`. **The gate is per-field, never
   an aggregate rate** (AMD-0020 §2A).
-  **Close is the reconciliation**: it passes when `max |pct_diff| ≤ 0.5%`
-  **and** at most one comparison exceeds `0.1%`, with every exceedance
-  named in the report. At n=100 a `breach_rate < 0.01` gate permits zero
-  breaches and cannot express "one symbol needs a look"; that was a
-  criterion of mine, not a bar.
+    **Reconciliation is a monitor, not a gate** (AMD-0030). Every close
+  comparison and its `pct_diff` is logged; **every exceedance over 0.5% is
+  reported and adjudicated** — a second source's close where the store
+  already holds one, the IBKR contract identity, and a stated verdict —
+  and **the night is never failed by reconciliation**. `ibkr_reconcile` is
+  `required=False` precisely because this is an instrument, not a control:
+  what stops the pipeline when bars are wrong is `validate.py`. Its value
+  is the **trend**; a sustained pattern of disagreement is the alarm, not a
+  single instance. Corroboration is free with a one-day lag — the store
+  holds yfinance history and the next night gives context — so **no vendor
+  call is added to the nightly for it**, and yfinance stays bootstrap-only
+  (§3.1). At n=100 a `breach_rate < 0.01` gate permitted zero breaches and
+  could not express "one symbol needs a look"; that was a criterion of
+  mine, not a bar, and patching it twice was two amendments too many.
   **Volume is recorded, not breached**: `reconcile_log.breach` is false for
   volume rows. Our consolidated volume and IBKR's `TRADES` volume are not
   the same quantity — median ours/theirs 2.03×, p5–p95 1.35–2.78×,
