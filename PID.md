@@ -247,6 +247,13 @@ Base SHA in-scope diff and the commit identities before proceeding
 
 ## 13. Acceptance Definition
 
+**The nightly soak is operations, not a gate** (AMD-0032 §2D). The first
+week of real nightly runs is reviewed **retrospectively** by the Architect,
+at the same boundary as mandate-merged Work Orders; a defect found there
+becomes a **new Work Order** under DELIVERY-CHAIN §9 and does not reopen
+the phase. Closure is gated on WO-0009 AC3a–AC3d and AC14, not on elapsed
+calendar time.
+
 This master PID closes when PID-ARGUS-0001 through 0004 are Closed and the
 Product Owner confirms, in a PR comment on the final Work Order, that the
 Target Outcome in §3 is met on the delivery host for ten consecutive

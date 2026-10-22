@@ -735,6 +735,17 @@ feature set carries information out of sample, net of costs.
   of three independent barriers, the port allowlist the second and this
   assertion the third.
 
+- A `nightly` run targeting a **non-trading date** completes `ok=True`
+  (AMD-0032 §2B): the ingest step records `status='holiday'` on an empty
+  grouped-daily response, actions and materialise no-op, and a holiday is
+  **not** a failed required step. The weekend is the common case and must
+  raise no alarm.
+- **Staleness is monitored, not assumed** (AMD-0032 §2C): `argus
+  nightly-status` exits non-zero when the newest report in
+  `ARGUS_OUT_DIR/nightly` predates the last completed trading day, on its
+  own mid-morning timer. If the nightly stops firing, something says so —
+  which no count of successful nights ever established.
+
 **Schedule (UK time; systemd timers; service user `argus`):**
 ```
 23:30 ingest      Polygon grouped-daily for T; FMP calendars; validate

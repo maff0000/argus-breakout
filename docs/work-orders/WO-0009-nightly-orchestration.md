@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` — §3, §8.7 (`nightly`), §13 ; `DESIGN.md` §10 |
-| **Applicable Amendments** | AMD-0002, AMD-0003, AMD-0004, AMD-0019, AMD-0020 (delta — §2, §4, §6) |
+| **Applicable Amendments** | AMD-0002, AMD-0003, AMD-0004, AMD-0019, AMD-0020, AMD-0021, AMD-0022, AMD-0026, AMD-0029, AMD-0030, **AMD-0032 (delta — §2, §6)** |
 | **Base SHA** | main at Closure of WO-0003, WO-0006, WO-0007, WO-0008 |
 | **Branch** | `wo/0009-nightly-orchestration` |
 | **Depends on** | WO-0003, WO-0006, WO-0007, WO-0008 |
@@ -48,6 +48,15 @@ argus/pipeline.py                    create  STEPS: ordered list of (name, calla
                                                 every StepResult is written to ingest_log(source=f'nightly:{name}'); the report is written as JSON to
                                                 ARGUS_OUT_DIR/nightly/<date>.json)
 argus/commands/nightly_cmds.py       create  `nightly --date D [--skip-ibkr]`; exit 0 iff report.ok (registers onto the root app)
+                                             `nightly-status [--max-age-days N]` (AMD-0032 §2C): exits 0 when a report JSON exists in
+                                             ARGUS_OUT_DIR/nightly for the last completed TRADING day, 1 otherwise, printing the newest
+                                             report's date and its age. No network, no secrets
+ops/argus-status.service             create  runs `argus nightly-status`; no application logic (ADR-0008 constraint 5)
+ops/argus-status.timer               create  fires mid-morning UK
+                                             A run targeting a NON-TRADING date completes ok=True (AMD-0032 §2B):
+                                             ingest_polygon_day records status='holiday' on an empty grouped-daily response (WO-0004),
+                                             actions and materialise no-op, optional steps behave as on any night. A holiday is NOT a
+                                             failed required step
 argus/cli.py                         modify  add exactly one import line for argus.commands.nightly_cmds in the append-only block (AMD-0002)
 ops/systemd/argus-nightly.service    create  Type=oneshot; User=argus; Group=argus; WorkingDirectory=/srv/argus-breakout;
                                              EnvironmentFile=/srv/argus-breakout/.env; ExecStart=/srv/argus-breakout/ops/nightly.sh;
@@ -131,7 +140,11 @@ per step start/finish with `run_id`.
 ## 6. Acceptance criteria (Work Order + phase closure)
 - **AC1** — `argus nightly --date <last trading day>` exits 0 on the host with all required steps ok (operator check: report JSON filed).
 - **AC2** — systemd timer installed, enabled and shown by `systemctl list-timers` (operator check; output filed with hostnames redacted).
-- **AC3** — **Three consecutive unattended nightly runs** complete with ok=True (operator check: three report JSONs filed) — phase criterion.
+- **AC3a** — (AMD-0032 §2A) **The timer fires unattended.** With the timer temporarily retimed, **three** firings complete without a terminal: no TTY, running as the service user, `EnvironmentFile` loaded, stdout in the journal as JSON (AC12). Restore the timer to 23:30 afterwards and re-file `systemctl list-timers`.
+- **AC3b** — **Day-over-day state.** Three **consecutive trading dates** run in sequence via `nightly --date D`, each a separate unattended invocation — proving resumability, the `ingest_log` skip, `adj_version` and incremental materialise. The second and third runs must **skip** what the previous already stored (counts filed).
+- **AC3c** — **The configured hour works.** **One** firing at 23:30 BST completes with the day's Polygon grouped-daily **present**, filed with the row count. No compression replaces this: it is the only evidence that the chosen hour is late enough for the vendor.
+- **AC3d** — **A non-trading date behaves** (§2 below): the run is `ok=True`, the ingest step records `holiday`, materialise no-ops, filed. The weekend is the common case and must not raise an alarm.
+- **AC14** — (AMD-0032 §2C) `nightly-status` exits 0 after a good night and **1** when the newest report predates the last completed trading day (operator check: both outcomes, the second produced by moving the newest report aside and restoring it). The timer is installed and listed. **Non-vacuity: a deliberately stale `out/nightly/` must make it exit 1.** This is the control that replaces three nights of waiting — three nights is evidence about three nights; this is a control over every night after.
 - **AC4** — Every current member and ETF has ≥ 10 years of bars where source history exists; exceptions listed with reasons (operator check) — phase criterion.
 - **AC5** — `members_on` for 2016-06-30, 2020-03-31, 2024-12-31 matches hanshof within ±3 (operator check from WO-0003 evidence re-run) — phase criterion.
 - **AC6** — (replaced again, AMD-0030 §2A — **reconciliation is a monitor, not a gate**) Across the three nights, **every** close comparison and its `pct_diff` is written to `reconcile_log` and the per-field summary is filed; **every exceedance over 0.5% is reported and adjudicated in the evidence** with a stated verdict, by the template already used for SKYD — a second source's close where the store holds one, the IBKR contract identity (`conId`, `primaryExchange`, long name), and a conclusion. The volume median ratio is reported per night with its drift against the trailing median (AMD-0020 §2A). **The night does not fail on reconciliation and no count of exceedances fails this criterion**; what fails it is an exceedance left unreported or unadjudicated. `ibkr_reconcile` is `required=False` because this is an instrument, not a control — `validate.py` is what stops the pipeline when bars are wrong. AMD-0029 §2E's corroboration clause is withdrawn, and **no vendor call is added to the nightly**: corroboration is free with a one-day lag, since the store holds yfinance history and the following night gives context. Measured case for the template: SKYD 2026-10-13, ours and yfinance at 9.27 against IBKR's 9.08, contract identity confirmed as the intended issuer.
