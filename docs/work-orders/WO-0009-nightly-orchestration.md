@@ -64,6 +64,13 @@ argus/commands/nightly_cmds.py       create  `nightly --date D [--skip-ibkr]`; e
                                              `nightly-status [--max-age-days N]` (AMD-0032 §2C): exits 0 when a report JSON exists in
                                              ARGUS_OUT_DIR/nightly for the last completed TRADING day, 1 otherwise, printing the newest
                                              report's date and its age. No network, no secrets
+ops/argus-nightly.service            modify  AMD-0035 §2C — add MemoryMax=<cap> and MemoryHigh=<cap-1G>. cgroup v2 kills
+                                             THE UNIT rather than letting the kernel pick a victim by OOM score: on a
+                                             shared host the kernel's choice may be the model server, not the nightly
+                                             that caused the pressure. The cap is set from the host's MEASURED total
+                                             RAM, reported with the chosen value; default 4G unless measurement says
+                                             otherwise. The aim is not that the nightly succeeds — it is that its
+                                             failure is predictable, attributable, and caught by AC14 next morning
 ops/argus-status.service             create  runs `argus nightly-status`; no application logic (ADR-0008 constraint 5)
 ops/argus-status.timer               create  fires mid-morning UK
                                              A run targeting a NON-TRADING date completes ok=True (AMD-0032 §2B):
@@ -157,6 +164,7 @@ per step start/finish with `run_id`.
 - **AC3b** — **Day-over-day state.** Three **consecutive trading dates** run in sequence via `nightly --date D`, each a separate unattended invocation — proving resumability, the `ingest_log` skip, `adj_version` and incremental materialise. The second and third runs must **skip** what the previous already stored (counts filed).
 - **AC3c** — **The configured hour works.** **One** firing at 23:30 BST completes with the day's Polygon grouped-daily **present**, filed with the row count. No compression replaces this: it is the only evidence that the chosen hour is late enough for the vendor.
 - **AC3d** — **A non-trading date behaves** (§2 below): the run is `ok=True`, the ingest step records `holiday`, materialise no-ops, filed. The weekend is the common case and must not raise an alarm.
+- **AC16** — (AMD-0035 §2C) The nightly units carry `MemoryMax`/`MemoryHigh`; the host's **total RAM** and the chosen cap are filed. A deliberately over-cap run is killed by **its own cgroup** — journal line filed — and **AC14's staleness alarm fires** the following morning. No host, port or path values beyond the unit's own (CI-7).
 - **AC15** — (AMD-0033 §2B) A calendar refresh that **moves** an event's date leaves the old row intact with a frozen `last_seen` and inserts a new row; **two refreshes on an unchanged calendar extend `last_seen` without duplicating**. Point-in-time reconstruction for a past date returns the row that was current then, not the corrected one. **Non-vacuity: overwriting in place must fail the first test.** This is the criterion with a deadline — every nightly run before it lands loses that night's calendar state permanently and it cannot be reconstructed afterwards.
 - **AC14** — (AMD-0032 §2C) `nightly-status` exits 0 after a good night and **1** when the newest report predates the last completed trading day (operator check: both outcomes, the second produced by moving the newest report aside and restoring it). The timer is installed and listed. **Non-vacuity: a deliberately stale `out/nightly/` must make it exit 1.** This is the control that replaces three nights of waiting — three nights is evidence about three nights; this is a control over every night after.
 - **AC4** — Every current member and ETF has ≥ 10 years of bars where source history exists; exceptions listed with reasons (operator check) — phase criterion.

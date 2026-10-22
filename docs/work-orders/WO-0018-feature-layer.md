@@ -43,7 +43,14 @@ percentiles, and nothing downstream can be better than this.
 
 ## 2. Scope (exhaustive)
 ```
-argus/features/__init__.py      create  compute_features(store, start, end, symbols=None) -> FeatureReport(
+argus/features/__init__.py      create  AMD-0035 §2A — processes SYMBOLS IN BATCHES (ARGUS_FEATURE_SYMBOL_BATCH,
+                                          default 50) for the per-symbol and recursive features, and computes the
+                                          cross-sectional percentiles PER DATE. Neither stage holds the whole panel
+                                          resident: the recursions need a symbol's whole history but are independent
+                                          ACROSS symbols, and one date's percentile frame is ~1.24 MB. The batch size
+                                          is a setting, never a literal (ADR-0008 constraint 3). Features are
+                                          computed float64 and STORED float32 (AMD-0035 §2B)
+                                        compute_features(store, start, end, symbols=None) -> FeatureReport(
                                           n_dates, n_symbols, n_rows,
                                           null_counts: dict[str, int],          # per feature, over the run
                                           pct_population: pl.DataFrame[date, feature, n_non_null, n_members],
@@ -189,7 +196,7 @@ so an Auditor can check the arithmetic rather than the code.
 - **AC3** — `pct_population` is filed: per date, the number of non-NULL values ranked against `n_members`. Dates where the ranked population is below 95% of members are **listed** (CI-8, DESIGN §6.1).
 - **AC4** — Every §5 feature in DESIGN appears as a column, with its `_pct` and `_pct_sector`. **A diff of the §5 table against the delivered column list is filed**, and it is empty in both directions — nothing missing, nothing invented.
 - **AC5** — All §5 tests pass offline with no network and no `.env`. The golden-fixture derivation is filed in `golden.md` and is checkable by arithmetic.
-- **AC6** — **Wall time measured and reported**, not bounded in advance: full-history recompute and single-date incremental, both on the host, with the row counts. If the full run exceeds 30 minutes, say so and name the slowest factor group — a figure the Architect can act on rather than a target to be gamed.
+- **AC6** — **Wall time and PEAK RSS measured and reported** (AMD-0035 §2A), not bounded in advance: full-history recompute, single-date incremental and per batch, on the host, with row counts. **Peak RSS target is under 1 GB; above 2 GB is a finding** to report with the largest contributor named, not a figure to pass silently. The first pass measured **7.9 GB** — 2.4× a 3.27 GB float64 panel, ordinary for held intermediates, and why the computation now chunks. If the full run exceeds 30 minutes, say so and name the slowest factor group — a figure the Architect can act on rather than a target to be gamed. Chunking should also remove the single-date anomaly (24 s, because the recursions loaded all ten years).
 - **AC7** — Idempotency: a second run over the same range changes no row (operator check: checksum of `features` before and after).
 - **AC8** — `bars`, `bars_raw`, `etf_bars`, `membership`, `splits`, `dividends` and `events` are **byte-identical** before and after (checksum, CI-9). This Work Order reads them and writes only `features`.
 - **AC9** — Non-vacuity, mandatory (CI-6): file four mutation runs, each failing the intended test — (a) replacing Wilder smoothing with a simple mean fails the RSI and ATR property tests; (b) dropping the 1-month skip from `mom12_1` fails `test_mom12_1_ignores_the_last_21_days`; (c) substituting `0` for a NULL on insufficient history fails `test_insufficient_history_is_null_not_zero`; (d) ranking flagged symbol-days fails `test_flagged_symbol_day_excluded_from_ranking`.

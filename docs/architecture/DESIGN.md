@@ -511,6 +511,22 @@ universe and within sector (`<feature>_pct`, `<feature>_pct_sector`).
 | | `dist_res_atr`, `dist_sup_atr` | distance to the nearest clustered swing level above/below, in ATR; levels within 0.5·ATR are one level |
 | | `res_touches`, `sup_touches` | touch count of that level — a level tested four times is not the same object as one tested once |
 
+Features are **computed in float64 and stored `float32`** (AMD-0035 §2B).
+This does **not** touch `bars`, whose price columns stay **DOUBLE**
+(AMD-0019 §2C): a return is a difference of nearly equal numbers, where
+narrowing the inputs loses significance catastrophically. A stored
+*feature* is a bounded indicator or a 0–100 rank, where seven significant
+digits are ample, and it halves the panel from 3.27 GB to 1.63 GB.
+**The rule that makes it safe:** no consumer may take a **difference of
+two stored feature values** — every such quantity (`dist20_atr`,
+`bb_width`, each `*_atr` distance) is computed inside the feature layer in
+float64 and stored as its own feature. A playbook reads percentiles and
+stored features; it never subtracts one from another.
+
+The computation **chunks by symbol** for the recursive features and **by
+date** for the percentiles (AMD-0035 §2A), so neither stage holds the
+whole panel resident.
+
 **Level and candle distances are in ATR, never per cent** (AMD-0023 §2D):
 "2% from resistance" means something different for a 12%-volatility
 utility and a 70%-volatility biotech, and ATR units are what make the
@@ -763,6 +779,14 @@ feature set carries information out of sample, net of costs.
   grouped-daily response, actions and materialise no-op, and a holiday is
   **not** a failed required step. The weekend is the common case and must
   raise no alarm.
+- **No nightly step is unbounded in memory on a shared host**
+  (AMD-0035 §2C). The nightly units carry `MemoryMax`/`MemoryHigh`, set
+  from the host's measured total RAM. cgroup v2 then kills **the unit**,
+  rather than leaving the kernel to pick a victim by OOM score — which on
+  this host could be the Product Owner's model server instead of the
+  nightly that caused the pressure: a silent overnight failure bearing no
+  resemblance to its cause. The aim is a failure that is predictable and
+  attributable, caught by the staleness alarm below.
 - **Staleness is monitored, not assumed** (AMD-0032 §2C): `argus
   nightly-status` exits non-zero when the newest report in
   `ARGUS_OUT_DIR/nightly` predates the last completed trading day, on its
