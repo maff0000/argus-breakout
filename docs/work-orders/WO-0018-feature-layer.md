@@ -66,10 +66,25 @@ argus/features/levels.py        create  pivot_d r1_d s1_d r2_d s2_d and the _w/_
                                           dist_r1_atr, dist_s1_atr, swing_hi, swing_lo, dist_res_atr,
                                           dist_sup_atr, res_touches, sup_touches
                                           (distances in ATR, NEVER per cent — AMD-0023 §2D)
+                                          SWING LEVELS, fully specified by AMD-0034 §2B (the numbers WO-0018's
+                                          first pass correctly refused to guess):
+                                            lookback 252 trading days; a pivot older than that is dropped
+                                            fractal pivot = a bar whose high (low) is the extreme of the 5 bars
+                                              either side
+                                            clustering: pivots within 0.5 x ATR14 are ONE level, priced at the mean
+                                              of its members; res_touches/sup_touches = count of distinct pivots in it
+                                            INVALIDATION: a level the close has since passed through by more than
+                                              0.5 x ATR14 is DROPPED — a level price cut clean through is not
+                                              resistance any more
+                                            dist_res_atr = (nearest surviving level ABOVE close - close)/ATR14
+                                            dist_sup_atr = (close - nearest surviving level BELOW)/ATR14
+                                            NULL where none survives in the lookback — never 0 (AMD-0021 §2F)
 argus/features/risk.py          create  dd126, ulcer63, sharpe63
 argus/features/events_feat.py   create  days_to_earnings, days_since_earnings, pead_gap,
-                                          days_to_exdiv, days_since_exdiv, next_div_pct, div_yield_ttm
-                                          (the ex-dividend features AMD-0023 and the 2026-10-21 review added;
+                                          days_to_exdiv, days_since_exdiv
+                                          (next_div_pct and div_yield_ttm are REMOVED from this Work Order by
+                                           AMD-0034 §2C and §2E.4: they read resolved totals from `dividends`,
+                                           not `events`, so they depend on WO-0017 merging. They are WO-0020's)
                                            `events` rows are read point-in-time where first_seen/last_seen exist,
                                            and without them where WO-0009 has not yet merged)
 argus/features/percentiles.py   create  add_percentiles(df, features) -> df with <f>_pct and <f>_pct_sector
@@ -178,6 +193,9 @@ so an Auditor can check the arithmetic rather than the code.
 - **AC7** — Idempotency: a second run over the same range changes no row (operator check: checksum of `features` before and after).
 - **AC8** — `bars`, `bars_raw`, `etf_bars`, `membership`, `splits`, `dividends` and `events` are **byte-identical** before and after (checksum, CI-9). This Work Order reads them and writes only `features`.
 - **AC9** — Non-vacuity, mandatory (CI-6): file four mutation runs, each failing the intended test — (a) replacing Wilder smoothing with a simple mean fails the RSI and ATR property tests; (b) dropping the 1-month skip from `mom12_1` fails `test_mom12_1_ignores_the_last_21_days`; (c) substituting `0` for a NULL on insufficient history fails `test_insufficient_history_is_null_not_zero`; (d) ranking flagged symbol-days fails `test_flagged_symbol_day_excluded_from_ranking`.
+- **AC10** — (AMD-0034 §2E.1, the first-audit RED's F2) **Every constant and lag mutant must fail a test.** Run the full constant/lag mutation set and report the **surviving count, which must be 0**. The nine features the first audit found unpinned each need a boundary or golden test fixing their constant: the `slope*` lags, `clenow90`'s window, `dist20_atr`'s sign, `atr_pct`'s denominator, `dist_days25`'s threshold, `trend_template`'s 0.75, the `rs_rank` weights, the Keltner multiplier. A test that cannot detect a changed constant does not pin it, which is the whole of CI-6 and the reason §5 exists.
+- **AC11** — (AMD-0034 §2E.2, F4) `macd_hist` is **NULL** until the signal line has 9 values; no artificial `0.0` reaches a percentile population (test: the first valid bar asserts `is_null`, not `== 0`).
+- **AC12** — (AMD-0034 §2B) The four swing-level features are delivered, with a test that **a level the close has cut through by more than 0.5 ATR is dropped**, and `dist_res_atr`/`dist_sup_atr` are NULL where no level survives the lookback.
 
 ## 7. Evidence the Delivery Controller must file
 `tests.md`, `auditor-prompt.md`, `audit.md`, `acceptance.md`,

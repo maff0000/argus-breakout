@@ -116,8 +116,12 @@ bars_raw       (symbol TEXT, date DATE, open DOUBLE, high DOUBLE, low DOUBLE, cl
 splits         (symbol TEXT, date DATE, ratio DOUBLE NOT NULL, source TEXT)
                 -- PK (symbol, date, source). date = execution/effective date. ratio = to/from (2.0 for a 2:1).
 dividends      (symbol TEXT, date DATE, cash_amount DOUBLE NOT NULL, basis TEXT NOT NULL,
-                                source TEXT, vendor_id TEXT NOT NULL,
-                declaration_date DATE NULL, frequency INT NULL)
+                                                source TEXT, vendor_id TEXT NOT NULL,
+                declaration_date DATE NULL, frequency INT NULL, dividend_type TEXT NULL)
+                -- dividend_type comes from the payload (AMD-0034 §2A) and DOES discriminate in some cases:
+                -- DVN 2024-09-13 is SC + CD (genuine) where TEL 2024-11-22 is CD + CD (duplicate). Two
+                -- observations do not establish a vendor taxonomy, so it is a fast path and cross-source
+                -- retains the veto.
                 -- PK (symbol, date, source, vendor_id)  (AMD-0027 §2A). date = ex-dividend date.
                 -- declaration_date and frequency come from the payload (AMD-0029 §2A) and are what
                 -- separate a genuine second dividend from a DUPLICATED record: PGR's 2026-01-02 pair
@@ -220,9 +224,16 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
   normalisation (AMD-0027 §2A, §2B) — one row per vendor record, one total
   per ex-date.
     **Resolve each ex-date's records before summing.** Records of one
-  `(symbol, date, source)` differing in `cash_amount`, `declaration_date`
-  **or** `frequency` are **distinct dividends** and are summed
-  (AMD-0029 §2B). Records identical in all three and differing only in
+  `(symbol, date, source)` differing in `cash_amount`, `declaration_date`,
+  `frequency` **or `dividend_type`** are **distinct dividends** and are
+  summed (AMD-0029 §2B, AMD-0034 §2A).
+  **Cross-source veto:** where a group is held distinct by `dividend_type`
+  **alone** — identical in amount, declaration date and frequency — and a
+  second source's normalised total equals the **single** amount rather than
+  the sum, the second source **wins**: collapse, and warn naming both type
+  values and both totals. The field resolves DVN without needing a second
+  source, which matters because the no-second-source default collapses; it
+  is not the authority. Records identical in all three and differing only in
   `vendor_id` are **ambiguous, not duplicates** (AMD-0031 §2A): a
   duplicated record and a genuine pair are indistinguishable from one
   source — measured, TEL 2024-11-22 and DVN 2024-09-13 share the signature

@@ -80,13 +80,14 @@ first:
 | WO | Title | Depends on | Group |
 |---|---|---|---|
 | [WO-0018](../work-orders/WO-0018-feature-layer.md) | DESIGN §5 feature layer and percentiles | — (Phase 0 store) | P2-A — **concurrent with Phase 0** |
-| WO-0019 | Composites, breadth, coverage | WO-0018 | P2-B |
-| WO-0020 | RRG, internals, ratios, rotation score, regime | WO-0019 | P2-C |
-| WO-0021 | Playbooks and uncalibrated candidate lists | WO-0018, WO-0020 | P2-D |
-| WO-0022 | Report: §7.1 layout, Markdown and HTML; nightly step | WO-0021 | P2-E |
+| WO-0020 | Composites, breadth, coverage; **plus `next_div_pct` and `div_yield_ttm`** (AMD-0034 §2C) | WO-0018, WO-0017 | P2-B |
+| WO-0021 | RRG, internals, ratios, rotation score, regime | WO-0020 | P2-C |
+| WO-0022 | Playbooks and uncalibrated candidate lists | WO-0018, WO-0021 | P2-D |
+| WO-0023 | Report: §7.1 layout, Markdown and HTML; nightly step. **Peak RSS measured and reported; if it exceeds 4 GB the step chunks by symbol** (AMD-0034 §2G — WO-0018 peaked at 7.9 GB on a shared host) | WO-0022 | P2-E |
 
-WO-0019 onward are authored when WO-0018 closes. Only **WO-0018** carries
-the AMD-0033 §2A overlap conditions and may run during Phase 0.
+WO-0020 onward are authored when WO-0018 closes. Only **WO-0018** carries the AMD-0033 §2A overlap conditions and may run
+during Phase 0. (WO-0019 is a Phase 0 corrective, not part of this
+phase — `docs/work-orders/WO-0019-events-point-in-time-completion.md`.)
 
 ## 7. Acceptance
 - Every Work Order above closed under the delivery chain.

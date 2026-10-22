@@ -30,7 +30,8 @@ mirror; the Work Order file is authoritative.
 | [WO-0014](WO-0014-boundary-and-warning-corrections.md) | Boundary and warning corrections: same-company tails retained, publication allowlist, basis-normalised comparisons (AMD-0021) | WO-0013 (merged — this corrects it) | P0-F2 — may run with WO-0009 | **Accepted @ `6236748`** — merging |
 | [WO-0015](WO-0015-dividend-and-rename-diagnostics.md) | **Diagnostics only, changes nothing**: same-date dividend collapse; undeclared ticker renames (AMD-0025) | WO-0014 | P0-F3 — may run with WO-0009 | Merged — accepted @ `193ec5a` |
 | [WO-0016](WO-0016-dividend-record-identity.md) | Dividend record identity: attribute all 13 pairs, then fix both mechanisms (AMD-0027) | WO-0015 | P0-F4 — may run with WO-0009 | **Accepted @ `bb42776`** — merging |
-| [WO-0017](WO-0017-dividend-duplicate-guard.md) | Duplicate-record guard: distinguish a second dividend from a duplicated one (AMD-0029) | WO-0016 | P0-F5 — may run with WO-0009 | Approved |
+| [WO-0017](WO-0017-dividend-duplicate-guard.md) | Duplicate-record guard: distinguish a second dividend from a duplicated one (AMD-0029) | WO-0016 | P0-F5 — may run with WO-0009 | **Accepted @ `6c7077d`** — merging |
+| [WO-0019](WO-0019-events-point-in-time-completion.md) | Events point-in-time completion: versioned rows, one sanctioned reader (AMD-0034 §2F) | WO-0009 | P0-G — may run with WO-0018 | Approved |
 
 Execution order for the Delivery Controller: **WO-0001 + WO-0010
 concurrently** (P0-A) → **WO-0002** (P0-B, merged `bdce04d`) →
