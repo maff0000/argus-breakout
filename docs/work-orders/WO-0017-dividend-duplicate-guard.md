@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` §8.5, §8.6 ; `DESIGN.md` §3.2, §3.3 |
-| **Applicable Amendments** | AMD-0019, AMD-0021, AMD-0027, AMD-0029 |
+| **Applicable Amendments** | AMD-0019, AMD-0021, AMD-0027, AMD-0029, **AMD-0031 (delta, pre-merge)** |
 | **Base SHA** | main at Closure of WO-0016 |
 | **Branch** | `wo/0017-dividend-duplicate-guard` |
 | **Depends on** | WO-0016 (merged — this guards an exposure it opened) |
@@ -38,16 +38,32 @@ argus/data/schema.py            modify  dividends: add `declaration_date DATE NU
 argus/data/providers/polygon.py modify  dividends(): carry `declaration_date` and `frequency` through from the
                                           payload (both present on every record — WO-0015 evidence)
 argus/data/providers/bootstrap.py modify  yfinance: both fields NULL (not supplied)
-argus/data/adjust.py            modify  (a) DEDUPE BEFORE SUMMING (AMD-0029 §2B): records of one
-                                            (symbol, date, source) sharing cash_amount, declaration_date AND
-                                            frequency are ONE dividend however many vendor_ids they carry.
-                                            Where declaration_date or frequency is NULL for a source, fall back to
-                                            cash_amount equality alone for that source and warn that the dedupe
-                                            was weakened
+argus/data/adjust.py            modify  (a) RESOLVE BEFORE SUMMING (AMD-0031 §2A, replacing AMD-0029 §2B).
+                                            Records differing in cash_amount, declaration_date OR frequency are
+                                            DISTINCT dividends and are summed.
+                                            Records identical in all three, differing only in vendor_id, are
+                                            AMBIGUOUS — NOT duplicates: TEL 2024-11-22 (a duplicate) and
+                                            DVN 2024-09-13 (a genuine fixed + variable pair, both 0.22, declared
+                                            2024-08-06, frequency 4) share the signature exactly, so no payload
+                                            field separates them. Resolve against the OTHER source's
+                                            basis-normalised total for that (symbol, date):
+                                              within 1c of the SINGLE amount -> duplicate, collapse
+                                              within 1c of the SUM           -> genuine, keep both
+                                              neither, or no second source   -> COLLAPSE, warn, and COUNT it
+                                            The default collapses because an overstated dividend shrinks historical
+                                            adj_close and so INFLATES measured returns (AMD-0031 §2B).
+                                            Needs NO vendor call: both sources' rows are already in `dividends`.
+                                            Record each ambiguous group's resolution and its evidence in
+                                            MaterialiseReport.warnings. Where a source supplies neither
+                                            declaration_date nor frequency, fall back to cash_amount equality for
+                                            that source and warn the resolution was weakened
                                         (b) §2D NARROWED (AMD-0029 §2C): the larger-total rule does NOT apply where
                                             one source's total is an integer multiple of the other's within one
                                             cent. Warn, leave on source precedence, and name the pair in the
-                                            materialise report for attribution
+                                            materialise report for attribution. With (a) resolving DVN as genuine
+                                            this fires on 12 pairs (the FCX omissions, R9), not 13
+                                        (c) MaterialiseReport: add `n_ambiguous_groups_resolved_by_default`,
+                                            REPORTED with every run and not merely logged (AMD-0031 §2B)
 argus/data/store.py             modify  the migration backfills the two columns NULL and is idempotent, printing
                                           before/after counts; a re-run of `ingest polygon-actions` populates them
 argus/diagnostics/dividends.py  modify  the raw report also records `declaration_date` and `frequency` per record
@@ -89,14 +105,17 @@ sent, and a paraphrase is not a measurement.
 | `test_adjust.py::test_integer_multiple_does_not_trigger_larger_wins` | totals of 0.65 and 1.30 leave source precedence untouched and warn | asserts the chosen total **and** the warning |
 | `test_adjust.py::test_non_multiple_omission_still_takes_larger` | 0.075 against 0.15 is 2× → **excluded** by §2C; 0.075 against 0.20 still takes the larger | both sides of the narrowing, including that FCX's exact doubling now falls out |
 | `test_adjust.py::test_null_fields_weaken_dedupe_and_warn` | a source with NULL declaration/frequency dedupes on amount alone **and** warns it was weakened | asserts the warning |
+| `test_adjust.py::test_ambiguous_group_resolved_genuine_by_second_source` | **DVN's shape** — two identical-signature records at 0.22 with the other source at 0.44 → both count, total **0.44** | asserts 0.44; the case AMD-0029's rule got wrong |
+| `test_adjust.py::test_ambiguous_group_resolved_duplicate_by_second_source` | **TEL's shape** — other source equals **one** record → collapse to 0.65 | asserts 0.65: same code path, opposite verdict |
+| `test_adjust.py::test_ambiguous_group_defaults_to_collapse_and_counts_it` | no second source → collapse, warn, and `n_ambiguous_groups_resolved_by_default` increments | asserts the total, the warning **and** the counter |
 
 ## 6. Acceptance criteria
-- **AC1** — `docs/evidence/WO-0017/attribution.md` attributes **TEL 2024-11-22 and SKYD 2026-09-15** from verbatim raw payloads: record count, amounts, ids, declaration dates and frequencies, and a verdict of **duplicate**, **genuine second dividend**, or **omission**. A verdict of "cannot tell" is acceptable **only** with the payload showing why.
-- **AC2** — Store-wide: the count of duplicate groups the dedupe collapses, and the count of genuine multi-record ex-dates it preserves, reported separately. **PGR 2026-01-02 must appear in the second count, not the first** (operator check).
+- **AC1** — `docs/evidence/WO-0017/attribution.md` attributes **TEL 2024-11-22, SKYD 2026-09-15 and DVN 2024-09-13** (AMD-0031 §3) from verbatim raw payloads: record count, amounts, ids, declaration dates and frequencies, and a verdict of **duplicate**, **genuine second dividend**, or **omission**. A verdict of "cannot tell" is acceptable **only** with the payload showing why.
+- **AC2** — Store-wide: the count of groups collapsed, the count of genuine multi-record ex-dates preserved, **and the count resolved by the §2B default**, reported separately. **PGR 2026-01-02 and DVN 2024-09-13 must both appear in the preserved count, not the collapsed one** (operator check).
 - **AC3** — Every pair where one total is an integer multiple of the other is listed, left on source precedence, and warned (operator check: the list).
 - **AC4** — `adj_close` before and after for TEL and SKYD, and **unchanged for PGR** at the −5.931% WO-0016 established (operator check: the figures). A change in PGR means the dedupe is wrong.
 - **AC5** — `bars_raw` **byte-identical** before and after (checksum, CI-9); `SCHEMA_VERSION` is 7; the migration is idempotent and loses no rows.
-- **AC6** — Non-vacuity, mandatory (CI-6): file three mutation runs — (a) removing the dedupe fails `test_duplicate_record_is_deduplicated`; (b) deduplicating on `cash_amount` alone fails both `test_genuine_pair_survives_dedupe` and `test_equal_specials_with_different_declarations_both_count`; (c) dropping the integer-multiple exclusion fails `test_integer_multiple_does_not_trigger_larger_wins`.
+- **AC6** — Non-vacuity, mandatory (CI-6): file **four** mutation runs — (a) removing the dedupe fails `test_duplicate_record_is_deduplicated`; (b) deduplicating on `cash_amount` alone fails both `test_genuine_pair_survives_dedupe` and `test_equal_specials_with_different_declarations_both_count`; (c) dropping the integer-multiple exclusion fails `test_integer_multiple_does_not_trigger_larger_wins`; (d) **resolving an ambiguous group as *genuine* by default** fails `test_ambiguous_group_defaults_to_collapse_and_counts_it` (AMD-0031 §3).
 
 ## 7. Evidence the Delivery Controller must file
 `tests.md`, `auditor-prompt.md`, `audit.md`, `acceptance.md`,
