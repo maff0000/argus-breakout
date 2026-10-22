@@ -116,8 +116,14 @@ bars_raw       (symbol TEXT, date DATE, open DOUBLE, high DOUBLE, low DOUBLE, cl
 splits         (symbol TEXT, date DATE, ratio DOUBLE NOT NULL, source TEXT)
                 -- PK (symbol, date, source). date = execution/effective date. ratio = to/from (2.0 for a 2:1).
 dividends      (symbol TEXT, date DATE, cash_amount DOUBLE NOT NULL, basis TEXT NOT NULL,
-                source TEXT, vendor_id TEXT NOT NULL)
+                                source TEXT, vendor_id TEXT NOT NULL,
+                declaration_date DATE NULL, frequency INT NULL)
                 -- PK (symbol, date, source, vendor_id)  (AMD-0027 §2A). date = ex-dividend date.
+                -- declaration_date and frequency come from the payload (AMD-0029 §2A) and are what
+                -- separate a genuine second dividend from a DUPLICATED record: PGR's 2026-01-02 pair
+                -- differ on both (declared 2025-12-08 freq 4; 2025-12-05 freq 1) while a duplicate
+                -- repeats them. NULL where a source does not supply them. frequency also separates a
+                -- regular payment from a special, which the event features want in their own right.
                 -- vendor_id: the SOURCE'S OWN per-record identifier. Polygon supplies `id` on every
                 -- /v3/reference/dividends record (verified, WO-0015). A source with no record
                 -- identifier — yfinance, which delivers one summed figure per ex-date — uses 'sum'.
@@ -201,18 +207,32 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
     Each source's basis is established by **measurement**, recorded in
   `dividends.basis`; a source whose basis cannot be established is a stop,
   never a default.
-  A symbol's dividend for an ex-date is the **sum of that source's
+    A symbol's dividend for an ex-date is the **sum of that source's
   records** for it, taken after source precedence and after basis
   normalisation (AMD-0027 §2A, §2B) — one row per vendor record, one total
   per ex-date.
+  **Deduplicate before summing** (AMD-0029 §2B): records of one
+  `(symbol, date, source)` sharing `cash_amount`, `declaration_date` **and**
+  `frequency` are **one** dividend, however many `vendor_id`s they carry.
+  Keying on the vendor record id stopped a genuine second dividend being
+  discarded and removed an accidental guard against a duplicated one; this
+  restores that guard deliberately, on fields rather than by collapsing.
+  Where a source supplies neither field, fall back to `cash_amount`
+  equality and **warn that the dedupe was weakened**.
   **Vendor completeness** (AMD-0027 §2D): where two sources' normalised,
   summed totals for one `(symbol, date)` differ by more than **one cent and
   2% relative**, the adjustment takes the **larger**, records which source
   supplied it, and warns with both figures. The justification is
-  asymmetry — a vendor omitting a component is observed (Polygon carries
+    asymmetry — a vendor omitting a component is observed (Polygon carries
   one of FCX's two 0.075 components), a vendor inventing one is not. The
   comparison must be on **basis-normalised** amounts, or a split ratio
   reads as a completeness gap.
+  **The larger-total rule does NOT apply where one total is an integer
+  multiple of the other within one cent** (2×, 3×, …) — that is the
+  **duplicate** signature, not the omission one, and "take the larger" is
+  then exactly backwards (AMD-0029 §2C). Measured: TEL 2024-11-22 (1.30
+  against 0.65) and SKYD 2026-09-15 (0.05 against 0.10). Such a pair is
+  warned, left on source precedence, and named for attribution.
   Price columns and `adj_close` are stored **DOUBLE** (AMD-0019 §2C);
   float32 puts a 6e-8 relative floor under every published close and every
   return derived from one. When a new split

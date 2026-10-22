@@ -86,6 +86,21 @@ reconciliation verdict, not `breach_rate`; the ingest steps read the
 per-day `ingest_log` verdicts, because a quarantined day exits 0 by
 design (ratified WO-0004 spec-gap 5).
 
+**The install runs from staging, not the production checkout**
+(AMD-0029 §2D). **Do not check a feature branch out in
+`/srv/argus-breakout`** — the production checkout holds merged code only,
+and anything else reading that path would pick up unaccepted code. The
+install and the three nights run **from the WO-0009 worktree**, with
+**`ARGUS_STORE_DIR` set to the production store path from the first load**,
+so the store is created in its final home and never needs relocating.
+ADR-0008 constraint 1 is what makes the code location and the data location
+independent. The unit's `ExecStart` points at the worktree for the staging
+nights and is **repointed at the production checkout after merge** (AC13);
+the staged nights stay valid because the commit is identical and the path
+is immaterial by construction. Creating the `argus` service user, the
+units, and the first-install load (≈500 Polygon calls, the yfinance
+bootstrap, a materialise) are **approved**.
+
 **Logging is configured once per process** (AMD-0022). `configure_logging()`
 ends with `PrintLoggerFactory(file=sys.stdout)`, which binds the stdout
 **object** at call time rather than resolving it at each write. So the
@@ -119,10 +134,11 @@ per step start/finish with `run_id`.
 - **AC3** — **Three consecutive unattended nightly runs** complete with ok=True (operator check: three report JSONs filed) — phase criterion.
 - **AC4** — Every current member and ETF has ≥ 10 years of bars where source history exists; exceptions listed with reasons (operator check) — phase criterion.
 - **AC5** — `members_on` for 2016-06-30, 2020-03-31, 2024-12-31 matches hanshof within ±3 (operator check from WO-0003 evidence re-run) — phase criterion.
-- **AC6** — (replaced, AMD-0020 §3.4) Across the three nights, **every night's close comparison passes the per-field gate** — `max |pct_diff| ≤ 0.5%` and at most one comparison over 0.1%, each exceedance named — **and** the volume median ratio is reported per night with its drift against the trailing median (operator check) — phase criterion. An aggregate `breach_rate` is **not** a criterion: at n=100 it permits zero breaches and cannot express "one symbol needs a look".
+- **AC6** — (replaced, AMD-0020 §3.4) Across the three nights, **every night's close comparison passes the per-field gate** — `max |pct_diff| ≤ 0.5%` and at most one comparison over 0.1%, each exceedance named — **and** the volume median ratio is reported per night with its drift against the trailing median (operator check) — phase criterion. An aggregate `breach_rate` is **not** a criterion: at n=100 it permits zero breaches and cannot express "one symbol needs a look". **At most one close exceedance per night is permitted where a second independent source corroborates our value** (AMD-0029 §2E), recorded with all three figures and named; corroboration means a different vendor's close for that symbol-date within 0.1% of ours. An **uncorroborated** exceedance fails the gate, unchanged. Measured case: SKYD 2026-10-13, ours and yfinance at 9.27 against IBKR's 9.08, with SKYD's contract identity confirmed as the intended issuer — failing a night on a value IBKR alone disputes would be the gate punishing the better number.
 - **AC7** — Zero members without an industry group (operator check) — phase criterion.
 - **AC8** — Runbook present and followed verbatim for the install (Auditor reads it; DC confirms each step executed).
 - **AC9** — (AMD-0020 §2B, §2C) `docs/evidence/WO-0009/ibkr-volume-basis.md` records the same 20 symbols re-requested with **`useRTH=False`** and the resulting ratio, settling whether the ≈2× gap is regular-hours scoping or off-exchange print exclusion; the conclusion is written into DESIGN §3.1. `docs/evidence/WO-0009/skyd-contract.md` confirms IBKR's `conId`, `primaryExchange` and long name against our **SKYD** and accounts for the 2.09% close difference on 2026-10-13. SKYD is one of the five renamed tickers, so a symbol-string contract mismatch there is a finding against the ticker mapping and a CI-2 question, not a tolerance question.
+- **AC13** — (AMD-0029 §2D) After acceptance and merge, the systemd unit's `ExecStart` points at `/srv/argus-breakout`, **one nightly run completes from the production checkout**, and the staging worktree's unit is removed (operator check: the unit's `ExecStart` path and the run's report JSON; no host, port or user values beyond the documented service account — CI-7).
 - **AC12** — (AMD-0022) The nightly run's **log output is counted, not assumed**: the captured stdout holds valid JSON on every line, with one start and one finish record per executed step carrying the shared `run_id`, and the counts are filed (operator check). Non-vacuity (CI-6): configuring logging against a stale stdout object, or redirecting stdout after configuration, must make this fail. ADR-0008 constraint 6 requires structured JSON on stdout and nothing yet proves a line arrives; a logging requirement with no check that logging happened is vacuous.
 - **AC11** — (AMD-0021 §2E) The paper-account assertion is proved both ways: a fake handshake returning a paper-prefixed identifier connects; one returning a live-prefixed identifier **disconnects and raises**, and neither the identifier nor any substring of it appears in the message, the logs or the filed evidence (test + Auditor grep). Non-vacuity: removing the assertion makes the live-prefix test fail.
 - **AC10a** — (AMD-0022, reworded AMD-0026 §2B) **Precondition, checked at install:** no **IB Gateway or TWS process** on the host is serving a live-trading port. The check must identify the **listening process or container**, not merely that a port is bound: IBKR's live ports are conventions, and on this host another service already legitimately occupies one — **a non-IBKR service on an IBKR-numbered port is a PASS** and is none of this project's business. Recorded as pass/fail with **no port, host or container values filed** (CI-7). This is what keeps AMD-0021 §2E's three barriers — loopback default, port allowlist, paper-account assertion — measured rather than merely intended. A fail is a **stop**: the nightly does not install onto a host also serving a live IBKR gateway. (The earlier wording asserted that a stray live-port gateway had been removed; no such gateway existed — AMD-0026 §1a.)
