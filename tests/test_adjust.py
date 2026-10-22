@@ -19,7 +19,9 @@ from argus.data.adjust import (
     MaterialiseReport,
     apply_splits,
     dividend_adjusted_close,
+    dividend_dedupe_counts,
     equal_weight_aggregate,
+    integer_multiple,
     materialise,
     resolve_dividends,
     resolve_splits,
@@ -1003,7 +1005,7 @@ def test_migrate_store_is_in_place_idempotent_and_leaves_bars_raw_alone(tmp_path
     }
     assert _checksum(s, "bars_raw") == raw_before  # CI-9: bars_raw is byte-identical
     versions = s.read("SELECT version FROM schema_version ORDER BY version")["version"].to_list()
-    assert versions[-1] == 6
+    assert versions[-1] == 7
     # a second run changes nothing
     bars_sum, div_rows = _checksum(s, "bars"), s.read("SELECT * FROM dividends").rows()
     again = {t: (b, a) for t, b, a in s.migrate()}
@@ -1035,7 +1037,7 @@ def test_cli_migrate_store(clean_env, tmp_path):
     clean_env.setenv("ARGUS_STORE_DIR", str(tmp_path / "store"))
     res = CliRunner().invoke(app, ["migrate-store"])
     assert res.exit_code == 0, res.output
-    assert "schema 6" in res.output and "dividends: 2 -> 2" in res.output
+    assert "schema 7" in res.output and "dividends: 2 -> 2" in res.output
     assert "bars_raw: 12 -> 12" in res.output
     assert s.read("SELECT count(*) AS n FROM dividends WHERE basis IS NULL")["n"][0] == 0
 
@@ -1097,7 +1099,12 @@ def test_same_amount_twice_does_not_collapse(store):
     _seed_symbols(store, "TWN")
     rec = {"ticker": "TWN", "ex_dividend_date": ex.isoformat(), "dividend_type": "CD",
            "cash_amount": 0.50}
-    _ingest_polygon_dividends(store, [{**rec, "id": "id-one"}, {**rec, "id": "id-two"}])
+    # Same amount, different declaration dates: two dividends (AMD-0029 2B). Without a
+    # declaration date the dedupe would (correctly) treat them as one.
+    _ingest_polygon_dividends(store, [
+        {**rec, "id": "id-one", "declaration_date": "2026-01-05", "frequency": 4},
+        {**rec, "id": "id-two", "declaration_date": "2026-01-12", "frequency": 4},
+    ])
     assert store.read("SELECT count(*) AS n FROM dividends")["n"][0] == 2
     materialise(store, None)
     assert bars_of(store, "TWN")["adj_close"].to_list()[:4] == pytest.approx(
@@ -1109,18 +1116,21 @@ def test_larger_normalised_total_wins_and_warns(store):
     """FCX: Polygon returns one 0.075 record, yfinance sums 0.15 (AMD-0027 2D)."""
     days = _flat_bars(store, "FCX")
     ex = days[4]
-    put_dividends(store, [("FCX", ex, 0.075, "polygon"), ("FCX", ex, 0.15, "yfinance")])
+    # 0.20 against 0.075 is not an integer multiple (AMD-0029 2C), so the larger total wins.
+    # (FCX's own exact 0.075/0.15 doubling is the multiple case: see
+    # test_non_multiple_omission_still_takes_larger.)
+    put_dividends(store, [("FCX", ex, 0.075, "polygon"), ("FCX", ex, 0.20, "yfinance")])
     report = materialise(store, None)
     found = [w for w in report.warnings if w.startswith("dividend_disagreement")]
     assert len(found) == 1
-    assert "polygon=0.0750 yfinance=0.1500" in found[0] and "total_source=yfinance" in found[0]
+    assert "polygon=0.0750 yfinance=0.2000" in found[0] and "total_source=yfinance" in found[0]
     assert bars_of(store, "FCX")["adj_close"].to_list()[:4] == pytest.approx(
-        [100.0 * (1 - 0.15 / 100.0)] * 4, abs=1e-9
+        [100.0 * (1 - 0.20 / 100.0)] * 4, abs=1e-9
     )
     divs = store.read_dividends(["FCX"], LONG_AGO, FAR)
     kept, _ = resolve_dividends(divs)
     assert kept["total_source"].to_list() == ["yfinance"]
-    assert kept["cash_amount"].to_list() == [0.15]
+    assert kept["cash_amount"].to_list() == [0.20]
 
 
 def test_basis_difference_is_not_an_omission(store):
@@ -1205,7 +1215,7 @@ def _schema5_store(tmp_path):
         "('AAA', ?, 0.25, 'split_adjusted', 'yfinance')",
         [days[2], days[2]],
     )
-    con.execute("DELETE FROM schema_version WHERE version = 6")
+    con.execute("DELETE FROM schema_version WHERE version >= 6")
     con.close()
     return s
 
@@ -1217,7 +1227,7 @@ def test_migration_to_schema_6_is_idempotent_and_loses_no_rows(tmp_path):
     assert rows["dividends"] == (2, 2) and rows["bars_raw"] == (6, 6)
     got = s.read("SELECT source, vendor_id, cash_amount FROM dividends ORDER BY source")
     assert got.rows() == [("polygon", "legacy", 0.5), ("yfinance", "sum", 0.25)]
-    assert s.read("SELECT max(version) AS v FROM schema_version")["v"][0] == 6
+    assert s.read("SELECT max(version) AS v FROM schema_version")["v"][0] == 7
     again = {t: (b, a) for t, b, a in s.migrate()}
     assert again == {t: (after, after) for t, (_b, after) in rows.items()}
     assert s.read("SELECT source, vendor_id FROM dividends ORDER BY source").rows() == [
@@ -1293,8 +1303,10 @@ def test_attribute_pairs_collapse_omission_neither_and_basis_trap(tmp_path):
     put_splits(s, [("SPL", date(2026, 4, 1), 2.0, "polygon")])
     by_ticker = {
         "PGR": _payload(
-            {"ticker": "PGR", "ex_dividend_date": ex.isoformat(), "cash_amount": 0.10, "id": "a"},
-            {"ticker": "PGR", "ex_dividend_date": ex.isoformat(), "cash_amount": 13.50, "id": "b"},
+            {"ticker": "PGR", "ex_dividend_date": ex.isoformat(), "cash_amount": 0.10, "id": "a",
+             "declaration_date": "2025-12-08"},
+            {"ticker": "PGR", "ex_dividend_date": ex.isoformat(), "cash_amount": 13.50, "id": "b",
+             "declaration_date": "2025-12-05", "frequency": 1},
         ),
         "FCX": _payload(
             {"ticker": "FCX", "ex_dividend_date": ex.isoformat(), "cash_amount": 0.075, "id": "c"}
@@ -1322,7 +1334,287 @@ def test_attribute_pairs_collapse_omission_neither_and_basis_trap(tmp_path):
     assert verdict == {"PGR": "collapse", "FCX": "omission", "SAM": "neither", "SPL": "neither"}
     pgr = out.filter(pl.col("symbol") == "PGR").row(0, named=True)
     assert pgr["n_records"] == 2 and pgr["ids"] == ["a", "b"] and pgr["amounts"] == [0.10, 13.50]
+    assert pgr["declaration_dates"] == ["2025-12-08", "2025-12-05"] and pgr["frequencies"] == [4, 1]
     assert out.filter(pl.col("symbol") == "SPL")["polygon_normalised"][0] == pytest.approx(0.50)
     after = (s.read("SELECT * FROM dividends ORDER BY ALL").rows(),
              s.read("SELECT * FROM splits ORDER BY ALL").rows())
     assert before == after  # read-only
+
+
+# ---- WO-0017: duplicate-record guard (AMD-0029 2A-2C)
+_DIV_COLS = [
+    "symbol", "date", "cash_amount", "source", "vendor_id", "declaration_date", "frequency",
+]
+
+
+def put_dividends_full(store, rows):
+    """Rows are (symbol, ex, amount, source, vendor_id, declaration_date, frequency)."""
+    store.upsert(
+        "dividends",
+        pl.DataFrame(
+            rows, schema={"symbol": pl.String, "date": pl.Date, "cash_amount": pl.Float64,
+                          "source": pl.String, "vendor_id": pl.String,
+                          "declaration_date": pl.Date, "frequency": pl.Int64},
+            orient="row",
+        ),
+        ["symbol", "date", "source", "vendor_id"],
+    )
+
+
+def _div_frame(rows):
+    """A basis-stamped dividends frame for `resolve_dividends` (same row shape as above)."""
+    return stamp_dividend_basis(
+        pl.DataFrame(
+            rows, schema={"symbol": pl.String, "date": pl.Date, "cash_amount": pl.Float64,
+                          "source": pl.String, "vendor_id": pl.String,
+                          "declaration_date": pl.Date, "frequency": pl.Int64},
+            orient="row",
+        )
+    )
+
+
+def test_duplicate_record_is_deduplicated(store):
+    """TEL: Polygon returns the SAME dividend twice under two ids (same amount, same declaration
+    date, same frequency). It is one dividend: the factor uses 0.65 once, not 1.30."""
+    days = _flat_bars(store, "TEL")
+    ex, decl = days[4], date(2026, 2, 10)
+    put_dividends_full(store, [
+        ("TEL", ex, 0.65, "polygon", "id-a", decl, 4),
+        ("TEL", ex, 0.65, "polygon", "id-b", decl, 4),
+    ])
+    report = materialise(store, None)
+    assert bars_of(store, "TEL")["adj_close"].to_list()[:4] == pytest.approx(
+        [100.0 * (1 - 0.65 / 100.0)] * 4, abs=1e-9  # one, not 1 - 1.30/100
+    )
+    collapsed = [w for w in report.warnings if w.startswith("dividend_duplicate_collapsed")]
+    assert len(collapsed) == 1 and "records=2 distinct=1" in collapsed[0]
+    assert "id-a,id-b" in collapsed[0]
+    assert [w for w in report.warnings if w.startswith("dividend_dedupe_weakened")] == []
+
+
+def test_genuine_pair_survives_dedupe(store):
+    """PGR 2026-01-02, the real pair: 0.10 freq 4 declared 2025-12-08 and 13.50 freq 1 declared
+    2025-12-05. They differ on declaration date AND frequency, so both count: 13.60."""
+    days = _flat_bars(store, "PGR")
+    ex = days[4]
+    put_dividends_full(store, [
+        ("PGR", ex, 0.10, "polygon", "id-q", date(2025, 12, 8), 4),
+        ("PGR", ex, 13.50, "polygon", "id-s", date(2025, 12, 5), 1),
+    ])
+    report = materialise(store, None)
+    kept, _ = resolve_dividends(store.read_dividends(["PGR"], LONG_AGO, FAR))
+    assert kept["cash_amount"].to_list() == pytest.approx([13.60])
+    assert bars_of(store, "PGR")["adj_close"].to_list()[:4] == pytest.approx(
+        [100.0 * (1 - 13.60 / 100.0)] * 4, abs=1e-9
+    )
+    assert [w for w in report.warnings if w.startswith("dividend_duplicate_collapsed")] == []
+    counts = dividend_dedupe_counts(store.read_dividends(["PGR"], LONG_AGO, FAR))
+    assert counts == {"duplicate_groups_collapsed": 0, "genuine_multi_record": 1, "weakened": 0}
+
+
+def test_equal_specials_with_different_declarations_both_count(store):
+    """Two 0.50 records, same frequency, DIFFERENT declaration dates: two dividends (1.00).
+    A dedupe keyed on the amount alone would discard one."""
+    days = _flat_bars(store, "EQS")
+    ex = days[4]
+    put_dividends_full(store, [
+        ("EQS", ex, 0.50, "polygon", "id-1", date(2026, 1, 5), 1),
+        ("EQS", ex, 0.50, "polygon", "id-2", date(2026, 1, 20), 1),
+    ])
+    materialise(store, None)
+    kept, _ = resolve_dividends(store.read_dividends(["EQS"], LONG_AGO, FAR))
+    assert kept["cash_amount"].to_list() == pytest.approx([1.00])
+    assert bars_of(store, "EQS")["adj_close"].to_list()[:4] == pytest.approx(
+        [100.0 * (1 - 1.00 / 100.0)] * 4, abs=1e-9
+    )
+
+
+def test_integer_multiple_does_not_trigger_larger_wins(store):
+    """TEL 1.30 (Polygon) against 0.65 (yfinance), and SKYD 0.05 against 0.10: each is an exact
+    2x, the duplicate signature. The larger total is NOT taken; source precedence stands, and the
+    pair is warned and named (AMD-0029 2C)."""
+    days = weekdays(date(2026, 3, 2), 8)
+    for sym in ("TEL", "SKYD"):
+        store.write_bars_raw(
+            raw_rows(sym, days, 100.0, "polygon", ingested=datetime(2026, 3, 20, 6, 0))
+        )
+    ex = days[4]
+    put_dividends(store, [
+        ("TEL", ex, 1.30, "polygon"), ("TEL", ex, 0.65, "yfinance"),
+        ("SKYD", ex, 0.05, "polygon"), ("SKYD", ex, 0.10, "yfinance"),
+    ])
+    report = materialise(store, None)
+    multiples = [w for w in report.warnings if w.startswith("dividend_integer_multiple")]
+    assert len(multiples) == 2
+    tel = next(w for w in multiples if " TEL " in w)
+    assert "polygon=1.3000 yfinance=0.6500 multiple=2x" in tel
+    assert "left on source precedence" in tel
+    skyd = next(w for w in multiples if " SKYD " in w)
+    assert "polygon=0.0500 yfinance=0.1000 multiple=2x" in skyd
+    assert [w for w in report.warnings if w.startswith("dividend_disagreement")] == []
+    kept, _ = resolve_dividends(store.read_dividends(None, LONG_AGO, FAR))
+    got = {r["symbol"]: (r["cash_amount"], r["total_source"]) for r in kept.iter_rows(named=True)}
+    assert got == {"TEL": (1.30, "polygon"), "SKYD": (0.05, "polygon")}  # precedence, not larger
+    assert bars_of(store, "SKYD")["adj_close"].to_list()[:4] == pytest.approx(
+        [100.0 * (1 - 0.05 / 100.0)] * 4, abs=1e-9  # not 0.10: the larger was refused
+    )
+
+
+def test_non_multiple_omission_still_takes_larger(store):
+    """Both sides of the narrowing. 0.075 against 0.15 is exactly 2x: EXCLUDED (FCX's doubling now
+    falls out). 0.075 against 0.20 is no integer multiple within a cent: the larger still wins."""
+    ex = date(2026, 3, 5)
+
+    def resolved(poly, yf):
+        return resolve_dividends(_div_frame([
+            ("T", ex, poly, "polygon", "p1", date(2026, 2, 1), 4),
+            ("T", ex, yf, "yfinance", "sum", None, None),
+        ]))
+
+    kept, found = resolved(0.075, 0.15)  # 2x
+    assert kept["total_source"].to_list() == ["polygon"]
+    assert kept["cash_amount"].to_list() == [0.075]
+    assert len(found) == 1 and found[0].startswith("dividend_integer_multiple")
+    kept, found = resolved(0.075, 0.20)  # 2.67x: omission still takes the larger
+    assert kept["total_source"].to_list() == ["yfinance"]
+    assert kept["cash_amount"].to_list() == [0.20]
+    assert len(found) == 1 and found[0].startswith("dividend_disagreement")
+    assert "total_source=yfinance" in found[0]
+    kept, found = resolved(0.30, 0.70)  # k rounds to 2 but 0.70 is 0.10 off 2 x 0.30: larger wins
+    assert kept["total_source"].to_list() == ["yfinance"]
+    kept, found = resolved(0.10, 0.31)  # 3x within a cent (0.01 off): excluded
+    assert kept["total_source"].to_list() == ["polygon"]
+    assert "multiple=3x" in found[0]
+    kept, found = resolved(0.10, 0.32)  # 0.02 off 3x: not a multiple, larger wins
+    assert kept["total_source"].to_list() == ["yfinance"]
+    kept, found = resolved(0.50, 0.50)  # equal totals are not a "multiple" case, and no warning
+    assert found == [] and kept["total_source"].to_list() == ["polygon"]
+    kept, found = resolved(1.00, 1.05)  # ordinary 5% shortfall: unchanged by the narrowing
+    assert kept["total_source"].to_list() == ["yfinance"] and "total_source=yfinance" in found[0]
+
+
+def test_integer_multiple_definition():
+    assert integer_multiple(0.65, 1.30) == 2 and integer_multiple(1.30, 0.65) == 2
+    assert integer_multiple(0.10, 0.31) == 3 and integer_multiple(0.10, 0.32) is None
+    assert integer_multiple(0.50, 0.50) is None  # equal: k = 1
+    assert integer_multiple(0.50, 0.52) is None
+    assert integer_multiple(0.0, 0.10) is None and integer_multiple(-0.1, 0.2) is None
+
+
+def test_null_fields_weaken_dedupe_and_warn(store):
+    """A source with NULL declaration date / frequency (an un-re-ingested row, or yfinance)
+    dedupes on the amount alone, and says so."""
+    days = _flat_bars(store, "NUL")
+    ex = days[4]
+    put_dividends_full(store, [
+        ("NUL", ex, 0.40, "polygon", "legacy-a", None, None),
+        ("NUL", ex, 0.40, "polygon", "legacy-b", None, None),
+    ])
+    report = materialise(store, None)
+    weak = [w for w in report.warnings if w.startswith("dividend_dedupe_weakened")]
+    assert len(weak) == 1 and "source=polygon" in weak[0] and "cash_amount alone" in weak[0]
+    assert bars_of(store, "NUL")["adj_close"].to_list()[:4] == pytest.approx(
+        [100.0 * (1 - 0.40 / 100.0)] * 4, abs=1e-9  # one 0.40, not 0.80
+    )
+    # a single NULL on either field, anywhere in the source's records, weakens the whole source
+    kept, found = resolve_dividends(_div_frame([
+        ("MIX", ex, 0.40, "polygon", "a", date(2026, 1, 5), 4),
+        ("MIX", ex, 0.40, "polygon", "b", date(2026, 1, 20), None),
+    ]))
+    assert kept["cash_amount"].to_list() == [0.40]
+    assert any(w.startswith("dividend_dedupe_weakened") for w in found)
+    # a lone record has nothing to dedupe: no warning
+    _, found = resolve_dividends(_div_frame([("ONE", ex, 0.40, "yfinance", "sum", None, None)]))
+    assert found == []
+
+
+def test_dedupe_is_per_source(store):
+    """The same dividend held by both sources is not 'duplicated': it is the cross-source case."""
+    ex = date(2026, 3, 5)
+    kept, found = resolve_dividends(_div_frame([
+        ("T", ex, 0.50, "polygon", "p1", date(2026, 2, 1), 4),
+        ("T", ex, 0.50, "polygon", "p2", date(2026, 2, 1), 4),
+        ("T", ex, 0.50, "yfinance", "sum", None, None),
+    ]))
+    assert kept["cash_amount"].to_list() == [0.50] and kept["source"].to_list() == ["polygon"]
+    assert not any(w.startswith("dividend_disagreement") for w in found)
+
+
+def _schema6_store(tmp_path):
+    """A store as WO-0016 left it: dividends has vendor_id but not declaration_date / frequency."""
+    import duckdb
+
+    s = make_store(tmp_path)
+    s.write_bars_raw(raw_rows("AAA", weekdays(date(2026, 3, 2), 6), 12.5, "polygon"))
+    con = duckdb.connect(str(s.db_path))
+    con.execute("DROP TABLE dividends")
+    con.execute(
+        "CREATE TABLE dividends (symbol TEXT, date DATE, cash_amount DOUBLE NOT NULL, "
+        "basis TEXT NOT NULL CHECK (basis IN ('as_paid', 'split_adjusted')), source TEXT, "
+        "vendor_id TEXT NOT NULL, PRIMARY KEY (symbol, date, source, vendor_id))"
+    )
+    con.execute(
+        "INSERT INTO dividends VALUES ('AAA', ?, 0.5, 'as_paid', 'polygon', 'id-1'), "
+        "('AAA', ?, 0.7, 'as_paid', 'polygon', 'id-2'), "
+        "('AAA', ?, 0.25, 'split_adjusted', 'yfinance', 'sum')",
+        [date(2026, 3, 4)] * 3,
+    )
+    con.execute("DELETE FROM schema_version WHERE version >= 7")
+    con.close()
+    return s
+
+
+@respx.mock
+def test_migration_to_schema_7_is_idempotent_and_loses_no_rows_and_reingest_populates(tmp_path):
+    s = _schema6_store(tmp_path)
+    raw_before = _checksum(s, "bars_raw")
+    rows = {t: (b, a) for t, b, a in s.migrate()}
+    assert rows["dividends"] == (3, 3) and rows["bars_raw"] == (6, 6)
+    got = s.read("SELECT vendor_id, cash_amount, declaration_date, frequency FROM dividends "
+                 "ORDER BY vendor_id")
+    assert got.rows() == [("id-1", 0.5, None, None), ("id-2", 0.7, None, None),
+                          ("sum", 0.25, None, None)]
+    assert s.read("SELECT max(version) AS v FROM schema_version")["v"][0] == 7
+    again = {t: (b, a) for t, b, a in s.migrate()}
+    assert again == {t: (after, after) for t, (_b, after) in rows.items()}
+    assert _checksum(s, "bars_raw") == raw_before  # CI-9
+    # Re-ingest over the SAME primary keys populates the new columns (upsert, not skip), and
+    # leaves yfinance's NULLs alone.
+    _seed_symbols(s, "AAA")
+    ex = date(2026, 3, 4)
+    respx.get("https://api.polygon.io/v3/reference/splits").respond(
+        json={"status": "OK", "results": []})
+    respx.get("https://api.polygon.io/v3/reference/dividends").respond(json={"status": "OK",
+        "results": [
+            {"ticker": "AAA", "ex_dividend_date": ex.isoformat(), "cash_amount": 0.5,
+             "id": "id-1", "declaration_date": "2026-02-10", "frequency": 4},
+            {"ticker": "AAA", "ex_dividend_date": ex.isoformat(), "cash_amount": 0.7,
+             "id": "id-2", "declaration_date": "2026-02-01", "frequency": 1},
+        ]})
+    client = PolygonClient(SecretStr("unit-test-dummy"), calls_per_minute=6000)
+    try:
+        ingest_polygon_actions(s, client, date(2026, 1, 1))
+    finally:
+        client.close()
+    got = s.read("SELECT vendor_id, cash_amount, declaration_date, frequency FROM dividends "
+                 "ORDER BY vendor_id")
+    assert got.rows() == [
+        ("id-1", 0.5, date(2026, 2, 10), 4), ("id-2", 0.7, date(2026, 2, 1), 1),
+        ("sum", 0.25, None, None),
+    ]
+
+
+def test_dividend_dedupe_counts_separates_collapsed_from_preserved():
+    ex1, ex2, ex3 = date(2026, 1, 2), date(2026, 2, 2), date(2026, 3, 2)
+    frame = _div_frame([
+        ("TEL", ex1, 0.65, "polygon", "a", date(2025, 12, 1), 4),
+        ("TEL", ex1, 0.65, "polygon", "b", date(2025, 12, 1), 4),       # duplicate
+        ("PGR", ex2, 0.10, "polygon", "q", date(2025, 12, 8), 4),
+        ("PGR", ex2, 13.50, "polygon", "s", date(2025, 12, 5), 1),      # genuine pair
+        ("OLD", ex3, 0.30, "polygon", "x", None, None),
+        ("OLD", ex3, 0.30, "polygon", "y", None, None),                 # weakened collapse
+        ("ONE", ex3, 0.30, "yfinance", "sum", None, None),
+    ])
+    assert dividend_dedupe_counts(frame) == {
+        "duplicate_groups_collapsed": 2, "genuine_multi_record": 1, "weakened": 1,
+    }

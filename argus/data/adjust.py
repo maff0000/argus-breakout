@@ -33,6 +33,15 @@ its ex-date (`split_cum`, computed in `apply_splits` beside the price divisor), 
 `split_cum` of the last bar BEFORE the ex-date, so a split dated on the ex-date is divided out
 (the dividend was declared before it; AMD-0021 2D). `dividend_disagreement` compares two sources
 only after both are put on that one basis (AMD-0021 2D).
+
+Duplicate guard (AMD-0029 2B, 2C). Within one (symbol, ex-date, source), records that share
+`cash_amount`, `declaration_date` AND `frequency` are ONE dividend however many vendor ids they
+carry; they are collapsed BEFORE the ex-date is summed. The key is exactly those three fields:
+on the amount alone, a genuine pair of equal specials would be discarded. Where a source supplies
+no declaration date or frequency the key falls back to the amount and the weakening is warned.
+The larger-total rule of AMD-0027 2D does not apply when one source's total is an integer
+multiple (2x, 3x, ...) of the other's within one cent: that is the duplicate signature, so the
+pair is warned, named, and left on source precedence.
 """
 
 import json
@@ -69,6 +78,8 @@ _RATIO_TOLERANCE = 0.001  # split ratio disagreement, relative (0.1%, AMD-0012)
 _DIVIDEND_TOLERANCE = 0.01  # dividend disagreement, one cent (AMD-0012)
 # AMD-0027 2D: past one cent AND this fraction of the larger total, the larger total wins.
 _DIVIDEND_REL_TOLERANCE = 0.02
+# Rounding of an amount inside the dedupe key (a float key must not split two equal amounts).
+_DEDUPE_AMOUNT_DECIMALS = 6
 # AMD-0021 2B: a symbol's post-membership tail is excluded only where the ticker was REASSIGNED.
 # A reassigned ticker's hiatus runs to months or years (a delisting, then a different company
 # taking the symbol); a company that merely leaves the index trades straight through its
@@ -217,18 +228,87 @@ def totals_materially_differ(a: float, b: float) -> bool:
     )
 
 
+def integer_multiple(a: float, b: float) -> int | None:
+    """k >= 2 where the larger of two normalised totals is k times the smaller within one cent.
+
+    The test (AMD-0029 2C), on totals already on one basis: both must be positive; with
+    `lo <= hi`, k = round(hi / lo) and the pair is a multiple when k >= 2 and
+    |hi - k * lo| <= one cent (the same cent, and the same 4-decimal rounding, as
+    `totals_differ_by_a_cent`). Equal totals are k = 1 and are NOT a multiple case. Returns k, or
+    None when the pair is not a multiple."""
+    lo, hi = sorted((a, b))
+    if not lo > 0:
+        return None
+    k = round(hi / lo)
+    if k < 2:
+        return None
+    if abs(round(hi, 4) - round(k * lo, 4)) > _DIVIDEND_TOLERANCE + 1e-9:
+        return None
+    return int(k)
+
+
+def dedupe_source_records(rows: list[dict]) -> tuple[list[dict], bool]:
+    """One source's records of ONE ex-date -> (distinct dividends, weakened).
+
+    Records sharing `cash_amount`, `declaration_date` and `frequency` are one dividend (the first
+    is kept). If ANY record of the source lacks a declaration date or a frequency, the key falls
+    back to the amount alone for that source and `weakened` is True (only reported when there is
+    more than one record, since a single record has nothing to dedupe)."""
+    if len(rows) < 2:
+        return list(rows), False
+    strong = all(
+        r.get("declaration_date") is not None and r.get("frequency") is not None for r in rows
+    )
+    seen: set = set()
+    kept: list[dict] = []
+    for r in rows:
+        amount = round(r["cash_amount"], _DEDUPE_AMOUNT_DECIMALS)
+        key = (amount, r["declaration_date"], r["frequency"]) if strong else (amount,)
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(r)
+    return kept, not strong
+
+
+def dividend_dedupe_counts(dividends: pl.DataFrame) -> dict[str, int]:
+    """Store-wide AC2 counts from a `dividends` frame: ex-date/source groups whose duplicates the
+    dedupe collapses, groups with several records that all survive it (genuine multi-record),
+    and groups deduped on the weakened (amount-only) key."""
+    out = {"duplicate_groups_collapsed": 0, "genuine_multi_record": 0, "weakened": 0}
+    if dividends.is_empty():
+        return out
+    for _key, grp in dividends.group_by(["symbol", "date", "source"], maintain_order=True):
+        if grp.height < 2:
+            continue
+        rows = [{"declaration_date": None, "frequency": None, **r}
+                for r in grp.iter_rows(named=True)]
+        kept, weakened = dedupe_source_records(rows)
+        out["weakened"] += int(weakened)
+        if len(kept) < len(rows):
+            out["duplicate_groups_collapsed"] += 1
+        elif len(kept) > 1:
+            out["genuine_multi_record"] += 1
+    return out
+
+
 def resolve_dividends(
     dividends: pl.DataFrame, split_cum_at=None
 ) -> tuple[pl.DataFrame, list[str]]:
     """One row per (symbol, ex-date): the SUM of one source's records for it (AMD-0027 2A, 2B).
 
-    Within a source, every vendor record of an ex-date is summed (a quarterly and a special are
-    two records, one total). Across sources, Polygon takes precedence over yfinance, EXCEPT
+    Within a source, the vendor records of an ex-date are first DEDUPLICATED (records sharing
+    `cash_amount`, `declaration_date` and `frequency` are one dividend; AMD-0029 2B, see
+    `dedupe_source_records`), then summed (a quarterly and a special are two records, one total).
+    Across sources, Polygon takes precedence over yfinance, EXCEPT
     where the two sources' normalised totals differ by more than one cent AND `_DIVIDEND_REL`
     relative to the larger: then the LARGER total is taken and `total_source` records which
     source supplied it (AMD-0027 2D: a vendor omitting a component is observed, one inventing
     one is not). A difference of more than one cent but within the relative band is warned and
-    precedence is untouched, as before. Every warning carries both figures.
+    precedence is untouched, as before. Where one total is an integer multiple of the other
+    within one cent (`integer_multiple`), the larger-total rule does NOT apply (AMD-0029 2C): a
+    `dividend_integer_multiple` warning names the pair and precedence stands. Every warning
+    carries both figures.
 
     The comparison is on one basis (AMD-0021 2D): `split_cum_at(symbol, ex_date)` is the
     cumulative ratio of the splits after the ex-date, an 'as_paid' amount is divided by it and a
@@ -250,18 +330,40 @@ def resolve_dividends(
             return row["cash_amount"] / split_cum_at(row["symbol"], row["date"])
         return row["cash_amount"]
 
-    ranked = dividends.with_columns(_rank_expr().alias("_rank")).sort(["symbol", "date", "_rank"])
+    # vendor_id last: the order of one source's records (so which of a duplicate pair is kept,
+    # and how they are named in a warning) must not depend on storage order.
+    order = ["symbol", "date", "_rank"]
+    if "vendor_id" in dividends.columns:
+        order.append("vendor_id")
+    ranked = dividends.with_columns(_rank_expr().alias("_rank")).sort(order)
     kept: list[dict] = []
     for (sym, ex), grp in ranked.group_by(["symbol", "date"], maintain_order=True):
-        totals: dict[str, dict] = {}  # insertion order = precedence order
+        by_source: dict[str, list[dict]] = {}  # insertion order = precedence order
         for row in grp.iter_rows(named=True):
-            t = totals.setdefault(
-                row["source"],
-                {"source": row["source"], "stored": 0.0, "cmp": 0.0,
-                 "basis": row.get("basis") if has_basis else None},
-            )
-            t["stored"] += row["cash_amount"]
-            t["cmp"] += comparable(row)
+            by_source.setdefault(row["source"], []).append(row)
+        totals: dict[str, dict] = {}
+        for source, records in by_source.items():
+            distinct, weakened = dedupe_source_records(records)
+            ids = ",".join(str(r.get("vendor_id")) for r in records)
+            if weakened:
+                warnings.append(_warn(
+                    "dividend_dedupe_weakened", sym, ex,
+                    f"source={source} records={len(records)} declaration_date or frequency "
+                    "is NULL: deduplicated on cash_amount alone",
+                ))
+            if len(distinct) < len(records):
+                warnings.append(_warn(
+                    "dividend_duplicate_collapsed", sym, ex,
+                    f"source={source} records={len(records)} distinct={len(distinct)} "
+                    f"ids={ids}",
+                ))
+            t = totals[source] = {
+                "source": source, "stored": 0.0, "cmp": 0.0,
+                "basis": records[0].get("basis") if has_basis else None,
+            }
+            for row in distinct:
+                t["stored"] += row["cash_amount"]
+                t["cmp"] += comparable(row)
         srcs = list(totals.values())
         win = chosen = srcs[0]
         for other in srcs[1:]:
@@ -271,6 +373,17 @@ def resolve_dividends(
             detail = f"{win['source']}={a:.4f} {other['source']}={b:.4f}"
             if split_cum_at is not None and has_basis:
                 detail += f" (normalised; stored {win['stored']:.4f}/{other['stored']:.4f})"
+            multiple = integer_multiple(a, b)
+            if multiple is not None:
+                # The duplicate signature, not the omission one (AMD-0029 2C): warn, name the
+                # pair, and leave the choice on source precedence.
+                warnings.append(_warn(
+                    "dividend_integer_multiple", sym, ex,
+                    f"{win['source']}={a:.4f} {other['source']}={b:.4f} multiple={multiple}x "
+                    f"left on source precedence ({win['source']}), attribute from the raw payload"
+                    + (detail[detail.index(" (normalised"):] if " (normalised" in detail else ""),
+                ))
+                continue
             if totals_materially_differ(a, b):
                 if b > chosen["cmp"]:
                     chosen = other

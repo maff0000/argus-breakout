@@ -110,7 +110,9 @@ def test_next_url_cannot_redirect_key_to_other_host(client):
 def test_dividends(client):
     respx.get(f"{BASE}/v3/reference/dividends").respond(json=_fx("dividends.json"))
     df = client.dividends(date(2026, 1, 1))
-    assert df.columns == ["symbol", "date", "cash_dividend", "vendor_id"]
+    assert df.columns == [
+        "symbol", "date", "cash_dividend", "vendor_id", "declaration_date", "frequency",
+    ]
     assert df.height == 4
     row = df.filter(df["symbol"] == "MAA").row(0, named=True)
     assert row["date"] == date(2026, 3, 2) and row["cash_dividend"] == 0.25
@@ -135,6 +137,32 @@ def test_vendor_id_carried_from_payload(client):
     assert df.height == 2
     assert sorted(df["vendor_id"].to_list()) == ["id-quarterly", "id-special"]
     assert sorted(df["cash_dividend"].to_list()) == [0.10, 13.50]
+
+
+@respx.mock
+def test_declaration_date_and_frequency_carried(client):
+    """PGR 2026-01-02: the pair differs ONLY on declaration date and frequency (AMD-0029 2A).
+
+    Fails if either field is dropped, mis-typed, or taken from the wrong record."""
+    rec = {"ticker": "PGR", "ex_dividend_date": "2026-01-02", "dividend_type": "CD"}
+    respx.get(f"{BASE}/v3/reference/dividends").respond(
+        json={
+            "status": "OK",
+            "results": [
+                {**rec, "cash_amount": 0.10, "frequency": 4, "id": "id-q",
+                 "declaration_date": "2025-12-08"},
+                {**rec, "cash_amount": 13.50, "frequency": 1, "id": "id-s",
+                 "declaration_date": "2025-12-05"},
+                {**rec, "cash_amount": 0.20, "id": "id-bare"},  # neither field supplied
+            ],
+        }
+    )
+    df = client.dividends(date(2026, 1, 1))
+    by_id = {r["vendor_id"]: r for r in df.iter_rows(named=True)}
+    q, sp = by_id["id-q"], by_id["id-s"]
+    assert (q["declaration_date"], q["frequency"]) == (date(2025, 12, 8), 4)
+    assert (sp["declaration_date"], sp["frequency"]) == (date(2025, 12, 5), 1)
+    assert by_id["id-bare"]["declaration_date"] is None and by_id["id-bare"]["frequency"] is None
 
 
 @respx.mock
