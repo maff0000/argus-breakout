@@ -91,10 +91,10 @@ def test_actions_measures_not_null(tmp_path):
         con.close()
 
 
-def test_schema_version_is_7(tmp_path):
+def test_schema_version_is_8(tmp_path):
     store = Store(tmp_path / "store")
     store.init_schema()
     store.init_schema()
-    assert SCHEMA_VERSION == 7
+    assert SCHEMA_VERSION == 8
     sv = store.read("SELECT version FROM schema_version")
-    assert sv["version"].to_list() == [7]
+    assert sv["version"].to_list() == [8]

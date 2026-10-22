@@ -18,6 +18,7 @@ from argus.cli import app
 from argus.data.adjust import (
     MaterialiseReport,
     apply_splits,
+    decide_ambiguous_group,
     dividend_adjusted_close,
     dividend_dedupe_counts,
     equal_weight_aggregate,
@@ -862,15 +863,20 @@ def test_flag_excluded_count_is_never_a_silent_zero(store, clean_env, tmp_path, 
     clean_env.setenv("ARGUS_STORE_DIR", str(tmp_path / "store"))
     clean_env.setenv("ARGUS_CONFIG_DIR", str(tmp_path / "config"))
     runner = CliRunner()
-    assert "flagged symbol-days excluded: not computed" in runner.invoke(
-        app, ["adjust", "materialise"]
-    ).output
+    clean_out = runner.invoke(app, ["adjust", "materialise"]).output
+    assert "flagged symbol-days excluded: not computed" in clean_out
+    assert "ambiguous dividend groups resolved by default (collapsed): 0" in clean_out
     import argus.commands.adjust_cmds as cmds
 
     monkeypatch.setattr(
-        cmds, "materialise", lambda *_a, **_k: MaterialiseReport(1, 1, 0, [], 0, 7)
+        cmds, "materialise",
+        lambda *_a, **_k: MaterialiseReport(
+            1, 1, 0, [], 0, 7, n_ambiguous_groups_resolved_by_default=3
+        ),
     )
-    assert "flagged symbol-days excluded: 7" in runner.invoke(app, ["adjust", "materialise"]).output
+    out = runner.invoke(app, ["adjust", "materialise"]).output
+    assert "flagged symbol-days excluded: 7" in out
+    assert "ambiguous dividend groups resolved by default (collapsed): 3" in out
 
 
 # ------------------------------------------------------------------------------ DOUBLE prices
@@ -1005,7 +1011,7 @@ def test_migrate_store_is_in_place_idempotent_and_leaves_bars_raw_alone(tmp_path
     }
     assert _checksum(s, "bars_raw") == raw_before  # CI-9: bars_raw is byte-identical
     versions = s.read("SELECT version FROM schema_version ORDER BY version")["version"].to_list()
-    assert versions[-1] == 7
+    assert versions[-1] == 8
     # a second run changes nothing
     bars_sum, div_rows = _checksum(s, "bars"), s.read("SELECT * FROM dividends").rows()
     again = {t: (b, a) for t, b, a in s.migrate()}
@@ -1037,7 +1043,7 @@ def test_cli_migrate_store(clean_env, tmp_path):
     clean_env.setenv("ARGUS_STORE_DIR", str(tmp_path / "store"))
     res = CliRunner().invoke(app, ["migrate-store"])
     assert res.exit_code == 0, res.output
-    assert "schema 7" in res.output and "dividends: 2 -> 2" in res.output
+    assert "schema 8" in res.output and "dividends: 2 -> 2" in res.output
     assert "bars_raw: 12 -> 12" in res.output
     assert s.read("SELECT count(*) AS n FROM dividends WHERE basis IS NULL")["n"][0] == 0
 
@@ -1227,7 +1233,7 @@ def test_migration_to_schema_6_is_idempotent_and_loses_no_rows(tmp_path):
     assert rows["dividends"] == (2, 2) and rows["bars_raw"] == (6, 6)
     got = s.read("SELECT source, vendor_id, cash_amount FROM dividends ORDER BY source")
     assert got.rows() == [("polygon", "legacy", 0.5), ("yfinance", "sum", 0.25)]
-    assert s.read("SELECT max(version) AS v FROM schema_version")["v"][0] == 7
+    assert s.read("SELECT max(version) AS v FROM schema_version")["v"][0] == 8
     again = {t: (b, a) for t, b, a in s.migrate()}
     assert again == {t: (after, after) for t, (_b, after) in rows.items()}
     assert s.read("SELECT source, vendor_id FROM dividends ORDER BY source").rows() == [
@@ -1386,9 +1392,11 @@ def test_duplicate_record_is_deduplicated(store):
     assert bars_of(store, "TEL")["adj_close"].to_list()[:4] == pytest.approx(
         [100.0 * (1 - 0.65 / 100.0)] * 4, abs=1e-9  # one, not 1 - 1.30/100
     )
-    collapsed = [w for w in report.warnings if w.startswith("dividend_duplicate_collapsed")]
-    assert len(collapsed) == 1 and "records=2 distinct=1" in collapsed[0]
-    assert "id-a,id-b" in collapsed[0]
+    # No second source here, so this is the AMD-0031 2B default: collapsed, warned, COUNTED.
+    ambiguous = [w for w in report.warnings if w.startswith("dividend_ambiguous_group")]
+    assert len(ambiguous) == 1 and "records=2" in ambiguous[0]
+    assert "id-a,id-b" in ambiguous[0] and "resolution=default_collapse" in ambiguous[0]
+    assert report.n_ambiguous_groups_resolved_by_default == 1
     assert [w for w in report.warnings if w.startswith("dividend_dedupe_weakened")] == []
 
 
@@ -1407,9 +1415,11 @@ def test_genuine_pair_survives_dedupe(store):
     assert bars_of(store, "PGR")["adj_close"].to_list()[:4] == pytest.approx(
         [100.0 * (1 - 13.60 / 100.0)] * 4, abs=1e-9
     )
-    assert [w for w in report.warnings if w.startswith("dividend_duplicate_collapsed")] == []
+    assert [w for w in report.warnings if w.startswith("dividend_ambiguous_group")] == []
+    assert report.n_ambiguous_groups_resolved_by_default == 0
     counts = dividend_dedupe_counts(store.read_dividends(["PGR"], LONG_AGO, FAR))
-    assert counts == {"duplicate_groups_collapsed": 0, "genuine_multi_record": 1, "weakened": 0}
+    assert counts == {"duplicate_groups_collapsed": 0, "genuine_multi_record": 1,
+                      "resolved_by_default": 0, "weakened": 0}
 
 
 def test_equal_specials_with_different_declarations_both_count(store):
@@ -1538,6 +1548,174 @@ def test_dedupe_is_per_source(store):
     ]))
     assert kept["cash_amount"].to_list() == [0.50] and kept["source"].to_list() == ["polygon"]
     assert not any(w.startswith("dividend_disagreement") for w in found)
+    assert any("resolution=duplicate" in w for w in found)  # settled by the other source
+
+
+def _ambiguous_pair(source="polygon", amount=0.22, ids=("p1", "p2")):
+    """Two records identical in amount, declaration date and frequency (DVN's and TEL's shape)."""
+    decl = date(2024, 8, 6)
+    return [("T", date(2026, 3, 5), amount, source, i, decl, 4) for i in ids]
+
+
+def test_ambiguous_group_resolved_genuine_by_second_source():
+    """DVN 2024-09-13's shape: two identical-signature 0.22 records, the other source at 0.44
+    (the SUM). Both count: total 0.44, no default, no collapse."""
+    stats: dict = {}
+    kept, found = resolve_dividends(_div_frame([
+        *_ambiguous_pair(), ("T", date(2026, 3, 5), 0.44, "yfinance", "sum", None, None),
+    ]), stats=stats)
+    assert kept["cash_amount"].to_list() == pytest.approx([0.44])
+    assert kept["source"].to_list() == ["polygon"]
+    assert stats.get("ambiguous_default", 0) == 0
+    [w] = [w for w in found if w.startswith("dividend_ambiguous_group")]
+    assert "resolution=genuine" in w and "yfinance=0.4400" in w and "if_all=0.4400" in w
+    assert not any(w.startswith("dividend_disagreement") for w in found)
+    assert dividend_dedupe_counts(_div_frame([
+        *_ambiguous_pair(), ("T", date(2026, 3, 5), 0.44, "yfinance", "sum", None, None),
+    ]))["genuine_multi_record"] == 1  # DVN is PRESERVED, not collapsed (AC2)
+
+
+def test_ambiguous_group_resolved_duplicate_by_second_source():
+    """TEL 2024-11-22's shape: two identical-signature 0.65 records, the other source at 0.65
+    (ONE record). Collapse to 0.65: the same code path as DVN with the opposite verdict."""
+    stats: dict = {}
+    frame = _div_frame([
+        *_ambiguous_pair(amount=0.65), ("T", date(2026, 3, 5), 0.65, "yfinance", "sum", None, None),
+    ])
+    kept, found = resolve_dividends(frame, stats=stats)
+    assert kept["cash_amount"].to_list() == pytest.approx([0.65])
+    assert stats.get("ambiguous_default", 0) == 0
+    [w] = [w for w in found if w.startswith("dividend_ambiguous_group")]
+    assert "resolution=duplicate" in w and "if_one=0.6500" in w
+    assert dividend_dedupe_counts(frame)["duplicate_groups_collapsed"] == 1
+
+
+def test_ambiguous_group_defaults_to_collapse_and_counts_it(store):
+    """No second source, and a second source matching neither reading: collapse, warn, and the
+    counter increments - in the report, the ingest_log detail and the CLI figure."""
+    days = _flat_bars(store, "TEL")
+    ex, decl = days[4], date(2024, 8, 6)
+    put_dividends_full(store, [
+        ("TEL", ex, 0.65, "polygon", "id-a", decl, 4),
+        ("TEL", ex, 0.65, "polygon", "id-b", decl, 4),
+    ])
+    report = materialise(store, None)
+    assert bars_of(store, "TEL")["adj_close"].to_list()[:4] == pytest.approx(
+        [100.0 * (1 - 0.65 / 100.0)] * 4, abs=1e-9  # collapsed, never 1.30
+    )
+    [w] = [w for w in report.warnings if w.startswith("dividend_ambiguous_group")]
+    assert "resolution=default_collapse (no_second_source)" in w
+    assert report.n_ambiguous_groups_resolved_by_default == 1
+    detail = json.loads(
+        store.read("SELECT detail FROM ingest_log WHERE source = 'materialise'")["detail"][0]
+    )
+    assert detail["n_ambiguous_groups_resolved_by_default"] == 1
+    # a second source that matches NEITHER reading also falls to the default (and says why)
+    stats: dict = {}
+    kept, found = resolve_dividends(_div_frame([
+        *_ambiguous_pair(), ("T", date(2026, 3, 5), 0.30, "yfinance", "sum", None, None),
+    ]), stats=stats)
+    assert stats["ambiguous_default"] == 1
+    assert any("dividend_disagreement" in w and "polygon=0.2200" in w for w in found)  # one 0.22
+    assert any("(second_source_matches_neither)" in w for w in found)
+    # a re-run reports it again: the figure travels with every run, not only the first
+    assert materialise(store, None).n_ambiguous_groups_resolved_by_default == 1
+
+
+def test_ambiguous_group_edge_cases():
+    """The three-way test's edges. An amount of a cent or two makes the single amount and the sum
+    both fall within a cent of the other source: no evidence either way, so it DEFAULTS. A second
+    source that is itself ambiguous cannot settle the first. A group beside a distinct record is
+    judged on the ex-date TOTAL, not on the bare amount."""
+    assert decide_ambiguous_group(0.01, 0.02, 0.015) == ("default", "second_source_matches_both")
+    assert decide_ambiguous_group(0.22, 0.44, 0.44) == ("genuine", "matches_sum")
+    assert decide_ambiguous_group(0.22, 0.44, 0.22) == ("duplicate", "matches_one")
+    assert decide_ambiguous_group(0.22, 0.44, 0.225) == ("duplicate", "matches_one")  # in a cent
+    assert decide_ambiguous_group(0.22, 0.44, 0.33) == ("default", "second_source_matches_neither")
+    assert decide_ambiguous_group(0.22, 0.44, None) == ("default", "no_second_source")
+    ex, decl = date(2026, 3, 5), date(2024, 8, 6)
+    both_ambiguous = _div_frame([
+        *_ambiguous_pair(), *_ambiguous_pair("yfinance", ids=("y1", "y2")),
+    ])
+    stats: dict = {}
+    _kept, found = resolve_dividends(both_ambiguous, stats=stats)
+    assert stats["ambiguous_default"] == 2
+    assert all("second_source_itself_ambiguous" in w for w in found
+               if w.startswith("dividend_ambiguous_group"))
+    # PGR-shaped: a distinct special beside an ambiguous pair; other source = special + 2 x pair
+    kept, _ = resolve_dividends(_div_frame([
+        ("P", ex, 0.10, "polygon", "q1", decl, 4), ("P", ex, 0.10, "polygon", "q2", decl, 4),
+        ("P", ex, 13.50, "polygon", "s", date(2025, 12, 5), 1),
+        ("P", ex, 13.70, "yfinance", "sum", None, None),
+    ]))
+    assert kept["cash_amount"].to_list() == pytest.approx([13.70])
+    kept, _ = resolve_dividends(_div_frame([
+        ("P", ex, 0.10, "polygon", "q1", decl, 4), ("P", ex, 0.10, "polygon", "q2", decl, 4),
+        ("P", ex, 13.50, "polygon", "s", date(2025, 12, 5), 1),
+        ("P", ex, 13.60, "yfinance", "sum", None, None),
+    ]))
+    assert kept["cash_amount"].to_list() == pytest.approx([13.60])
+
+
+def test_differing_frequency_or_declaration_still_sums():
+    """Records differing in ANY one of the three are distinct and are summed, never resolved."""
+    ex = date(2026, 3, 5)
+    d1, d2 = date(2026, 2, 1), date(2026, 2, 9)
+    for rows in (
+        [("A", ex, 0.50, "polygon", "1", d1, 4), ("A", ex, 0.50, "polygon", "2", d1, 1)],   # freq
+        [("A", ex, 0.50, "polygon", "1", d1, 4), ("A", ex, 0.50, "polygon", "2", d2, 4)],   # decl
+        [("A", ex, 0.50, "polygon", "1", d1, 4), ("A", ex, 0.70, "polygon", "2", d1, 4)],   # amount
+    ):
+        stats: dict = {}
+        kept, found = resolve_dividends(_div_frame(rows), stats=stats)
+        assert kept["cash_amount"].to_list() == pytest.approx([sum(r[2] for r in rows)])
+        assert stats.get("ambiguous_default", 0) == 0
+        assert not any(w.startswith("dividend_ambiguous_group") for w in found)
+
+
+def _schema7_store(tmp_path):
+    """A store as WO-0009 leaves it: events migrated (schema 7), dividends still without
+    declaration_date / frequency."""
+    s = _schema6_store(tmp_path)
+    s.init_schema()  # tables incl. events; rebuilds dividends to the current columns...
+    import duckdb
+
+    con = duckdb.connect(str(s.db_path))
+    con.execute("DROP TABLE dividends")
+    con.execute(
+        "CREATE TABLE dividends (symbol TEXT, date DATE, cash_amount DOUBLE NOT NULL, "
+        "basis TEXT NOT NULL CHECK (basis IN ('as_paid', 'split_adjusted')), source TEXT, "
+        "vendor_id TEXT NOT NULL, PRIMARY KEY (symbol, date, source, vendor_id))"
+    )
+    con.execute(
+        "INSERT INTO dividends VALUES ('AAA', ?, 0.5, 'as_paid', 'polygon', 'id-1')",
+        [date(2026, 3, 4)],
+    )
+    con.execute("DELETE FROM schema_version")
+    con.execute("INSERT INTO schema_version VALUES (7, now())")
+    con.close()
+    return s
+
+
+def test_store_already_at_version_7_still_receives_the_dividend_columns(tmp_path):
+    """The migration is gated on the columns existing, never on the version number: a store at 7
+    (events migrated) must still get declaration_date / frequency, then a re-run is a no-op."""
+    s = _schema7_store(tmp_path)
+    cols = {c for (c,) in s.read(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'dividends'"
+    ).rows()}
+    assert "declaration_date" not in cols and "frequency" not in cols
+    assert s.read("SELECT max(version) AS v FROM schema_version")["v"][0] == 7
+    raw_before = _checksum(s, "bars_raw")
+    s.migrate()
+    got = s.read("SELECT vendor_id, cash_amount, declaration_date, frequency FROM dividends")
+    assert got.rows() == [("id-1", 0.5, None, None)]
+    assert s.read("SELECT max(version) AS v FROM schema_version")["v"][0] == 8
+    after = {t: (b, a) for t, b, a in s.migrate()}  # re-run: nothing changes
+    assert all(b == a for b, a in after.values())
+    assert s.read("SELECT count(*) AS n FROM dividends")["n"][0] == 1
+    assert s.read("SELECT count(*) AS n FROM schema_version")["n"][0] == 2  # 7 kept, 8 added once
+    assert _checksum(s, "bars_raw") == raw_before  # CI-9
 
 
 def _schema6_store(tmp_path):
@@ -1565,7 +1743,7 @@ def _schema6_store(tmp_path):
 
 
 @respx.mock
-def test_migration_to_schema_7_is_idempotent_and_loses_no_rows_and_reingest_populates(tmp_path):
+def test_migration_to_schema_8_is_idempotent_and_loses_no_rows_and_reingest_populates(tmp_path):
     s = _schema6_store(tmp_path)
     raw_before = _checksum(s, "bars_raw")
     rows = {t: (b, a) for t, b, a in s.migrate()}
@@ -1574,7 +1752,7 @@ def test_migration_to_schema_7_is_idempotent_and_loses_no_rows_and_reingest_popu
                  "ORDER BY vendor_id")
     assert got.rows() == [("id-1", 0.5, None, None), ("id-2", 0.7, None, None),
                           ("sum", 0.25, None, None)]
-    assert s.read("SELECT max(version) AS v FROM schema_version")["v"][0] == 7
+    assert s.read("SELECT max(version) AS v FROM schema_version")["v"][0] == 8
     again = {t: (b, a) for t, b, a in s.migrate()}
     assert again == {t: (after, after) for t, (_b, after) in rows.items()}
     assert _checksum(s, "bars_raw") == raw_before  # CI-9
@@ -1614,7 +1792,14 @@ def test_dividend_dedupe_counts_separates_collapsed_from_preserved():
         ("OLD", ex3, 0.30, "polygon", "x", None, None),
         ("OLD", ex3, 0.30, "polygon", "y", None, None),                 # weakened collapse
         ("ONE", ex3, 0.30, "yfinance", "sum", None, None),
+        ("DVN", ex1, 0.22, "polygon", "g1", date(2024, 8, 6), 4),
+        ("DVN", ex1, 0.22, "polygon", "g2", date(2024, 8, 6), 4),       # ambiguous -> genuine
+        ("DVN", ex1, 0.44, "yfinance", "sum", None, None),
+        ("NEW", ex2, 0.20, "polygon", "n1", date(2024, 8, 6), 4),
+        ("NEW", ex2, 0.20, "polygon", "n2", date(2024, 8, 6), 4),       # ambiguous -> default
     ])
+    # TEL and OLD both collapse by default (no second source); OLD's is also weakened.
     assert dividend_dedupe_counts(frame) == {
-        "duplicate_groups_collapsed": 2, "genuine_multi_record": 1, "weakened": 1,
+        "duplicate_groups_collapsed": 0, "genuine_multi_record": 2,
+        "resolved_by_default": 3, "weakened": 1,
     }
