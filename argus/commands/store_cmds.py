@@ -3,7 +3,7 @@
 import typer
 
 from argus.cli import app
-from argus.data.schema import SCHEMA_VERSION
+from argus.data.schema import LEGACY_VENDOR_ID, SCHEMA_VERSION
 from argus.data.store import Store
 from argus.settings import get_settings
 
@@ -30,7 +30,8 @@ def init_store() -> None:
 def migrate_store() -> None:
     """Bring the store to the current schema in place (idempotent, from stored data only).
 
-    Rebuilds `dividends` with a per-source `basis`, widens float32 price columns of `bars` /
+    Rebuilds `dividends` with a per-source `basis` and a `vendor_id` (yfinance 'sum', Polygon
+    'legacy' until `ingest polygon-actions` is re-run), widens float32 price columns of `bars` /
     `etf_bars` to float64, records the schema version; prints row counts before and after per
     table. `bars_raw` is never written. Run it on a COPY of the store first."""
     store = Store(get_settings().argus_store_dir)
@@ -40,3 +41,14 @@ def migrate_store() -> None:
     typer.echo(f"store migrated to schema {SCHEMA_VERSION}: table, rows before, rows after")
     for name, before, after in rows:
         typer.echo(f"  {name}: {before} -> {after}")
+    legacy = store.read(
+        "SELECT count(*) AS n FROM dividends WHERE source = ? AND vendor_id = ?",
+        ["polygon", LEGACY_VENDOR_ID],
+    )["n"][0]
+    if legacy:
+        typer.echo(
+            f"  {legacy} polygon dividend rows hold the placeholder vendor_id "
+            f"'{LEGACY_VENDOR_ID}'; "
+            "run `argus ingest polygon-actions --since <store start>` to replace them with "
+            "real records"
+        )

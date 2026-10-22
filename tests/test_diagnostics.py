@@ -76,8 +76,11 @@ def put_dividends(store: Store, rows: list[tuple[str, date, float, str]]) -> Non
     df = pl.DataFrame(
         rows, schema={"symbol": pl.String, "date": pl.Date, "cash_amount": pl.Float64,
                       "source": pl.String}, orient="row",
+    ).with_columns(  # one record per (symbol, date, source) here: vendor_id is only a key part
+        pl.when(pl.col("source") == "yfinance").then(pl.lit("sum")).otherwise(pl.lit("rec-1"))
+        .alias("vendor_id")
     )
-    store.upsert("dividends", df, ["symbol", "date", "source"])
+    store.upsert("dividends", df, ["symbol", "date", "source", "vendor_id"])
 
 
 def put_membership(store: Store, rows: list[tuple[str, date, date | None]]) -> None:

@@ -505,14 +505,16 @@ def test_actions_two_sources_both_persist(store, client):
     store.upsert(
         "dividends",
         pl.DataFrame(
-            {"symbol": ["MAA"], "date": [d], "cash_amount": [0.25], "source": ["yfinance"]}
+            {"symbol": ["MAA"], "date": [d], "cash_amount": [0.25], "source": ["yfinance"],
+             "vendor_id": ["sum"]}
         ),
-        ["symbol", "date", "source"],
+        ["symbol", "date", "source", "vendor_id"],
     )
     respx.get(f"{BASE}/v3/reference/splits").respond(json={"status": "OK", "results": [
         {"ticker": "MAA", "execution_date": d.isoformat(), "split_from": 1, "split_to": 4}]})
     respx.get(f"{BASE}/v3/reference/dividends").respond(json={"status": "OK", "results": [
-        {"ticker": "MAA", "ex_dividend_date": d.isoformat(), "cash_amount": 0.25}]})
+        {"ticker": "MAA", "ex_dividend_date": d.isoformat(), "cash_amount": 0.25,
+         "id": "rec-maa"}]})
     assert ingest_polygon_actions(store, client, date(2026, 1, 1)) == 2
     sq = "SELECT source FROM splits WHERE symbol = 'MAA' ORDER BY source"
     dq = "SELECT source FROM dividends WHERE symbol = 'MAA' ORDER BY source"
