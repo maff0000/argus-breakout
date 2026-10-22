@@ -101,9 +101,20 @@ Delivered in phases, each a Phase PID with its own Work Orders:
 | PID-ARGUS-0005 | ML Ranking (optional) | gradient-boosted ranker with purged CV; deployed only if it beats the rules baseline out of sample |
 | PID-ARGUS-0006 | Containerisation | multi-stage Dockerfile (`uv sync --frozen --no-dev`), compose with `store/`+`out/` volumes and env-file, container scheduler, production deployment notes |
 
-Only PID-ARGUS-0001 is Approved at v1.0 of this document. Later Phase PIDs
-are authored by the Architect when the preceding phase closes, informed by
-its evidence. PID-ARGUS-0006 is planned, not yet authored: the application
+PID-ARGUS-0001 is Approved; **PID-ARGUS-0002 is authored as Draft**
+(AMD-0033 §2A). A Phase PID is authored by the Architect **when the
+evidence that should inform it is in hand**, which is normally at the
+preceding phase's closure but need not be. A Work Order from a later phase
+may be dispatched **concurrently** with the preceding phase's remaining
+Work Orders provided all four hold, recorded in the Work Order: (1) it
+shares **no source file** with any open Work Order; (2) it depends on no
+table, column or interface an open Work Order is still changing; (3) the
+evidence that would have informed it is cited, by figure; (4) the Product
+Owner has approved the overlap. A PID authored before closure is marked
+**Draft** and finalised at closure with the closure evidence appended.
+**Phase closure criteria are unaffected** — overlap buys parallelism, never
+a shortcut through a gate, and PID-ARGUS-0004's IC gate (AMD-0028 §2A)
+binds regardless of when the work was dispatched. PID-ARGUS-0006 is planned, not yet authored: the application
 is built **container-ready** from WO-0001 under ADR-0008 and packaged in
 that phase (AMD-0004).
 

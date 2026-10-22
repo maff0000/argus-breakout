@@ -51,6 +51,16 @@ Base SHAs for dependent Work Orders are by-reference (`main at Closure of
 close (DELIVERY-CHAIN §6.3). WO-0001's Base SHA was rebased by Architect
 determination — see its §11.
 
+## PID-ARGUS-0002 — Screening Engine and Rotation Layer (Draft)
+
+| WO | Title | Depends on | Group | Status |
+|---|---|---|---|---|
+| [WO-0018](WO-0018-feature-layer.md) | DESIGN §5 feature layer and cross-sectional percentiles | Phase 0 store | **P2-A — runs concurrently with Phase 0** (AMD-0033 §2A) | Approved |
+
+WO-0019 … WO-0022 are authored when WO-0018 closes
+(`docs/pids/PID-ARGUS-0002-screening-engine.md` §6). Only WO-0018 carries
+the AMD-0033 §2A overlap conditions — see its §0.
+
 ## Approval record
 WO-0001 … WO-0009 were approved by the Architect in the commit that
 introduced this index; WO-0010 in the commit that added it (AMD-0005);

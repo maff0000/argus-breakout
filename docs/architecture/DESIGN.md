@@ -157,7 +157,15 @@ sector_daily   (date DATE, group_id TEXT, level TEXT, rs_ratio DOUBLE, rs_mom DO
                 dist_days25 INT, updown_vol20 DOUBLE, vol_share DOUBLE, vol_share_z DOUBLE,
                 divergence BOOLEAN, rotation_score DOUBLE, flag TEXT NULL)
 events         (symbol TEXT, date DATE, type TEXT {'earnings','exdiv'}, time_of_day TEXT NULL,
-                source TEXT, confirmed BOOLEAN)
+                source TEXT, confirmed BOOLEAN,
+                first_seen DATE NOT NULL, last_seen DATE NOT NULL)
+                -- first_seen/last_seen are the calendar-snapshot window in which this row was present
+                -- (AMD-0033 §2B). A refresh that still sees the row extends last_seen; a row the
+                -- calendar no longer carries keeps its last_seen frozen. A MOVED date is a different
+                -- `date` and therefore a new row, so the key needs no change.
+                -- Point-in-time: what the calendar said on day X is the row where
+                -- first_seen <= X <= last_seen. Without this the table holds only the LATEST view and
+                -- any study reads corrected dates as though they had been known at the time.
 ranks          (date DATE, symbol TEXT, playbook TEXT, composite DOUBLE, verdict TEXT, reasons JSON)
 evidence_packs (date DATE PK, tokens INT, json TEXT)
 briefs         (date DATE, model TEXT, prompt_tokens INT, completion_tokens INT, text TEXT, grade JSON NULL)
@@ -352,10 +360,14 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
   discontinuity in the old member's history and corrupts every 252-day
   momentum and relative-strength feature crossing it — the damage CI-2
   guards against for renames.
+- Event rows are **never overwritten in place** for a changed date
+  (AMD-0033 §2B): a moved earnings date creates a new row and leaves the
+  old one with its `last_seen` frozen. A study for date X uses only rows
+  where `first_seen <= X <= last_seen` — AMD-0024 §2D's mandatory
+  point-in-time rule, now enforceable from the data rather than promised.
 - Reconciliation: 20 members per night against IBKR daily bars, the sample
   placing unresolved `jump_unexplained` flags first (AMD-0019 §3). Every
-  comparison is written to `reconcile_log`. **The gate is per-field, never
-  an aggregate rate** (AMD-0020 §2A).
+  comparison is written to `reconcile_log`.
     **Reconciliation is a monitor, not a gate** (AMD-0030). Every close
   comparison and its `pct_diff` is logged; **every exceedance over 0.5% is
   reported and adjudicated** — a second source's close where the store

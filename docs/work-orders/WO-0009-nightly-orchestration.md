@@ -28,6 +28,17 @@ argus/data/providers/ibkr.py         modify  AMD-0021 §2E — PAPER-ACCOUNT ASS
                                              (CI-7). This reads handshake data already received and is NOT an account, order or position
                                              request — WO-0008 §3's exclusion stands. WO-0009 is the only Work Order that may touch this
                                              file; WO-0014 does not, so the two stay concurrent
+argus/data/schema.py                 modify  AMD-0033 §2B — events: add `first_seen DATE NOT NULL`,
+                                             `last_seen DATE NOT NULL`; key unchanged (symbol, date, type); bump
+                                             SCHEMA_VERSION to 8 (WO-0017 takes 7; the version is a monotonic
+                                             marker, so a gap from out-of-order merges is harmless)
+argus/events/earnings.py             modify  AMD-0033 §2B — URGENT, lands before the first nightly run. On insert
+                                             set first_seen = last_seen = the refresh date. On a row the calendar
+                                             still carries, extend last_seen ONLY — never rewrite date, time_of_day
+                                             or first_seen. A row absent from the calendar is LEFT ALONE with its
+                                             last_seen frozen. The migration sets both columns to the existing
+                                             rows' ingest date where known, else the migration date, and states
+                                             which it used
 argus/data/reconcile.py              modify  AMD-0020 §3.1 — per-field treatment: close breaches as now; VOLUME rows are recorded with
                                              breach=False (our consolidated volume and IBKR TRADES volume are not the same quantity,
                                              measured median 2.03× at WO-0008). ReconcileReport carries per-field pass/fail plus the
@@ -144,6 +155,7 @@ per step start/finish with `run_id`.
 - **AC3b** — **Day-over-day state.** Three **consecutive trading dates** run in sequence via `nightly --date D`, each a separate unattended invocation — proving resumability, the `ingest_log` skip, `adj_version` and incremental materialise. The second and third runs must **skip** what the previous already stored (counts filed).
 - **AC3c** — **The configured hour works.** **One** firing at 23:30 BST completes with the day's Polygon grouped-daily **present**, filed with the row count. No compression replaces this: it is the only evidence that the chosen hour is late enough for the vendor.
 - **AC3d** — **A non-trading date behaves** (§2 below): the run is `ok=True`, the ingest step records `holiday`, materialise no-ops, filed. The weekend is the common case and must not raise an alarm.
+- **AC15** — (AMD-0033 §2B) A calendar refresh that **moves** an event's date leaves the old row intact with a frozen `last_seen` and inserts a new row; **two refreshes on an unchanged calendar extend `last_seen` without duplicating**. Point-in-time reconstruction for a past date returns the row that was current then, not the corrected one. **Non-vacuity: overwriting in place must fail the first test.** This is the criterion with a deadline — every nightly run before it lands loses that night's calendar state permanently and it cannot be reconstructed afterwards.
 - **AC14** — (AMD-0032 §2C) `nightly-status` exits 0 after a good night and **1** when the newest report predates the last completed trading day (operator check: both outcomes, the second produced by moving the newest report aside and restoring it). The timer is installed and listed. **Non-vacuity: a deliberately stale `out/nightly/` must make it exit 1.** This is the control that replaces three nights of waiting — three nights is evidence about three nights; this is a control over every night after.
 - **AC4** — Every current member and ETF has ≥ 10 years of bars where source history exists; exceptions listed with reasons (operator check) — phase criterion.
 - **AC5** — `members_on` for 2016-06-30, 2020-03-31, 2024-12-31 matches hanshof within ±3 (operator check from WO-0003 evidence re-run) — phase criterion.
