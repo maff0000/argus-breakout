@@ -157,7 +157,15 @@ sector_daily   (date DATE, group_id TEXT, level TEXT, rs_ratio DOUBLE, rs_mom DO
                 dist_days25 INT, updown_vol20 DOUBLE, vol_share DOUBLE, vol_share_z DOUBLE,
                 divergence BOOLEAN, rotation_score DOUBLE, flag TEXT NULL)
 events         (symbol TEXT, date DATE, type TEXT {'earnings','exdiv'}, time_of_day TEXT NULL,
-                source TEXT, confirmed BOOLEAN)
+                source TEXT, confirmed BOOLEAN,
+                first_seen DATE NOT NULL, last_seen DATE NOT NULL)
+                -- first_seen/last_seen are the calendar-snapshot window in which this row was present
+                -- (AMD-0033 §2B). A refresh that still sees the row extends last_seen; a row the
+                -- calendar no longer carries keeps its last_seen frozen. A MOVED date is a different
+                -- `date` and therefore a new row, so the key needs no change.
+                -- Point-in-time: what the calendar said on day X is the row where
+                -- first_seen <= X <= last_seen. Without this the table holds only the LATEST view and
+                -- any study reads corrected dates as though they had been known at the time.
 ranks          (date DATE, symbol TEXT, playbook TEXT, composite DOUBLE, verdict TEXT, reasons JSON)
 evidence_packs (date DATE PK, tokens INT, json TEXT)
 briefs         (date DATE, model TEXT, prompt_tokens INT, completion_tokens INT, text TEXT, grade JSON NULL)
@@ -211,14 +219,30 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
   records** for it, taken after source precedence and after basis
   normalisation (AMD-0027 §2A, §2B) — one row per vendor record, one total
   per ex-date.
-  **Deduplicate before summing** (AMD-0029 §2B): records of one
-  `(symbol, date, source)` sharing `cash_amount`, `declaration_date` **and**
-  `frequency` are **one** dividend, however many `vendor_id`s they carry.
-  Keying on the vendor record id stopped a genuine second dividend being
-  discarded and removed an accidental guard against a duplicated one; this
-  restores that guard deliberately, on fields rather than by collapsing.
-  Where a source supplies neither field, fall back to `cash_amount`
-  equality and **warn that the dedupe was weakened**.
+    **Resolve each ex-date's records before summing.** Records of one
+  `(symbol, date, source)` differing in `cash_amount`, `declaration_date`
+  **or** `frequency` are **distinct dividends** and are summed
+  (AMD-0029 §2B). Records identical in all three and differing only in
+  `vendor_id` are **ambiguous, not duplicates** (AMD-0031 §2A): a
+  duplicated record and a genuine pair are indistinguishable from one
+  source — measured, TEL 2024-11-22 and DVN 2024-09-13 share the signature
+  exactly — because the fact that separates them lives in the issuer's
+  announcement, not in the payload. An ambiguous group is resolved against
+  the **other source's basis-normalised total**:
+  within one cent of the **single** amount → duplicate, collapse; within
+  one cent of the **sum** → genuine, keep both; **neither, or no second
+  source** → **collapse, warn, and count it**.
+  The default collapses because the errors are not symmetric: an
+  overstated dividend shrinks historical `adj_close` and therefore
+  **inflates** measured historical returns, which is the unstated-optimism
+  direction this project refuses (R5, CI-8). The **count of groups resolved
+  by the default** is reported with every run — a tie-breaker is acceptable
+  while rare and visible, and needs revisiting if it becomes load-bearing.
+  Every group's resolution and its evidence go into
+  `MaterialiseReport.warnings`. **No vendor call is needed**: both sources'
+  rows are already stored. And **no row is ever deleted** — deduplication
+  is an adjustment-time decision over stored data, which is why three
+  successive rulings on it have cost one re-ingest between them.
   **Vendor completeness** (AMD-0027 §2D): where two sources' normalised,
   summed totals for one `(symbol, date)` differ by more than **one cent and
   2% relative**, the adjustment takes the **larger**, records which source
@@ -336,15 +360,28 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
   discontinuity in the old member's history and corrupts every 252-day
   momentum and relative-strength feature crossing it — the damage CI-2
   guards against for renames.
+- Event rows are **never overwritten in place** for a changed date
+  (AMD-0033 §2B): a moved earnings date creates a new row and leaves the
+  old one with its `last_seen` frozen. A study for date X uses only rows
+  where `first_seen <= X <= last_seen` — AMD-0024 §2D's mandatory
+  point-in-time rule, now enforceable from the data rather than promised.
 - Reconciliation: 20 members per night against IBKR daily bars, the sample
   placing unresolved `jump_unexplained` flags first (AMD-0019 §3). Every
-  comparison is written to `reconcile_log`. **The gate is per-field, never
-  an aggregate rate** (AMD-0020 §2A).
-  **Close is the reconciliation**: it passes when `max |pct_diff| ≤ 0.5%`
-  **and** at most one comparison exceeds `0.1%`, with every exceedance
-  named in the report. At n=100 a `breach_rate < 0.01` gate permits zero
-  breaches and cannot express "one symbol needs a look"; that was a
-  criterion of mine, not a bar.
+  comparison is written to `reconcile_log`.
+    **Reconciliation is a monitor, not a gate** (AMD-0030). Every close
+  comparison and its `pct_diff` is logged; **every exceedance over 0.5% is
+  reported and adjudicated** — a second source's close where the store
+  already holds one, the IBKR contract identity, and a stated verdict —
+  and **the night is never failed by reconciliation**. `ibkr_reconcile` is
+  `required=False` precisely because this is an instrument, not a control:
+  what stops the pipeline when bars are wrong is `validate.py`. Its value
+  is the **trend**; a sustained pattern of disagreement is the alarm, not a
+  single instance. Corroboration is free with a one-day lag — the store
+  holds yfinance history and the next night gives context — so **no vendor
+  call is added to the nightly for it**, and yfinance stays bootstrap-only
+  (§3.1). At n=100 a `breach_rate < 0.01` gate permitted zero breaches and
+  could not express "one symbol needs a look"; that was a criterion of
+  mine, not a bar, and patching it twice was two amendments too many.
   **Volume is recorded, not breached**: `reconcile_log.breach` is false for
   volume rows. Our consolidated volume and IBKR's `TRADES` volume are not
   the same quantity — median ours/theirs 2.03×, p5–p95 1.35–2.78×,
@@ -709,6 +746,17 @@ feature set carries information out of sample, net of costs.
   gateway on another host, `ib_host`'s loopback default (R3) is the first
   of three independent barriers, the port allowlist the second and this
   assertion the third.
+
+- A `nightly` run targeting a **non-trading date** completes `ok=True`
+  (AMD-0032 §2B): the ingest step records `status='holiday'` on an empty
+  grouped-daily response, actions and materialise no-op, and a holiday is
+  **not** a failed required step. The weekend is the common case and must
+  raise no alarm.
+- **Staleness is monitored, not assumed** (AMD-0032 §2C): `argus
+  nightly-status` exits non-zero when the newest report in
+  `ARGUS_OUT_DIR/nightly` predates the last completed trading day, on its
+  own mid-morning timer. If the nightly stops firing, something says so —
+  which no count of successful nights ever established.
 
 **Schedule (UK time; systemd timers; service user `argus`):**
 ```
