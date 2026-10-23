@@ -322,6 +322,18 @@ change (AMD-0005).
    delta's bound is the Work Order's §2 Scope as verified by the Auditor's
    `scope_fidelity`, plus evidence and clerical paths. Any "the diff
    touches only …" file list in an earlier amendment is superseded.
+10. **A criterion that depends on an external fact cites its measurement
+    (AMD-0036 §2E).** Where an acceptance criterion turns on something
+    outside this system's control — a vendor's publication time, a tier's
+    entitlements, a field's presence, a market's calendar — the Work Order
+    **names the evidence establishing that fact**, by file and figure, or
+    the criterion is **not valid** and the Delivery Controller says so
+    rather than attempting it. Searching
+    `docs/evidence/**/spec-gaps.md` and `spec-defects.md` for the fact is
+    part of writing the criterion. **The Architect has now twice written a
+    criterion contradicted by evidence already filed and ratified**; this
+    makes the omission visible before anyone waits on it, and a Delivery
+    Controller challenging a criterion on this ground is doing its job.
 9. **Count and version assertions (AMD-0019 §2F, widened AMD-0021 §2G).**
    A Work Order whose §2 adds or removes a table or column, or changes
    `SCHEMA_VERSION`, may update any test that fails **purely because a

@@ -99,6 +99,7 @@ ADR-0003 (data sources), ADR-0004 (model gateway), ADR-0005
 | Bootstrap (yfinance or Stooq) | one-off 10+ year adjusted bars for universe + ETFs | once | unofficial; validated before use |
 | IBKR paper gateway (`ib_async`) | reconciliation sample (20 symbols/night, rotating, flagged-first), corporate-action truth, IV30 for ETFs/index | nightly | vendor limit ≈60 historical requests / 10 min; **the pacer implements a conservative 50** and the nightly budget is 46 (AMD-0020 §2D). Daily `TRADES` volume is **not** comparable with consolidated volume — measured ≈2× at WO-0008 — while closes are; see §3.3 |
 | FMP Basic | `profile` (GICS sector + industry group, fallback only), `earnings-calendar`, `dividends-calendar`, `splits-calendar` | daily calendars | 250 calls/day; the constituent endpoints are **402 on this plan** — AMD-0013 |
+| Polygon `GET /v1/marketstatus/upcoming` | exchange holidays and early closes — **authoritative, same vendor and key as the bars** | weekly, cached in `market_calendar` | no new dependency (AMD-0036 §2B); where the calendar does not cover a date the day is **`pending`, never `holiday`** |
 | Public constituents table + `hanshof` CSV | current members with `GICS Sector`, `GICS Sub-Industry`, `Date added`; membership history to 2025-08-23, with a documented derivation for the gap | weekly | no key; see AMD-0013 §2C for the gap routing and the `membership.source` precision values |
 | `hanshof/sp500_constituents` CSV (MIT) | cross-check of membership 1996→ | monthly | — |
 
@@ -314,13 +315,21 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
   series keeps the row: a hole severs the price history and breaks every
   252-day momentum and relative-strength feature crossing it, which is the
   damage CI-2 exists to prevent.
-- `ingest_log.status` ∈ `{'ok','quarantined','holiday','failed'}`
-  (AMD-0018 §2A). `'ok'` — stored, no day-level fault; any symbol flags
+- `ingest_log.status` ∈ `{'ok','pending','quarantined','holiday','failed'}`
+  (AMD-0018 §2A, AMD-0036 §2A). **`'pending'` — the market calendar says
+  this is a trading day and the vendor has not published it yet.** Not a
+  holiday, not `ok`, and **never skipped by the resume logic**; the
+  staleness alarm treats the last trading day as incomplete until it is
+  `ok` or `quarantined`. **`'holiday'` means the CALENDAR says the day is
+  not a trading day** — never merely "the response was empty", which is
+  the conflation that let a real trading day be dropped while the night
+  reported success (AMD-0036 §1b). `'ok'` — stored, no day-level fault; any symbol flags
   counted in `detail`. `'quarantined'` — **stored in `bars_raw`** but
   carrying a day-level fault, so not published to `bars`. `'failed'` —
   nothing was fetched. `'rejected'` is retired: it conflated "judged
   faulty" with "not stored". `backfill_polygon` resumes past
-  `('ok','holiday','quarantined')`; re-judging is `ingest revalidate`'s
+    `('ok','holiday','quarantined')` **only** — `'pending'` and `'failed'`
+  are always retried (AMD-0036 §2A); re-judging is `ingest revalidate`'s
   job, which reads `bars_raw` and calls no provider (AMD-0018 §2D, §2E).
 - Nightly validation (`argus/data/validate.py`). A day is **quarantined**
   (stored in `bars_raw`, not published to `bars`) if < 95% of members on
@@ -774,6 +783,13 @@ feature set carries information out of sample, net of costs.
   of three independent barriers, the port allowlist the second and this
   assertion the third.
 
+- The nightly **retries rather than relying on a well-chosen hour**
+  (AMD-0036 §2C): where the target day is `pending`, a retry timer
+  re-attempts every 30 minutes until the day is `ok`/`quarantined` or a
+  **06:00 UK cutoff**. Picking an hour late enough for the vendor is
+  guesswork that breaks whenever the vendor's timing moves; retrying until
+  the data exists does not need the hour to be right. The vendor's measured
+  publication time is recorded here by the Architect from WO-0024 AC4.
 - A `nightly` run targeting a **non-trading date** completes `ok=True`
   (AMD-0032 §2B): the ingest step records `status='holiday'` on an empty
   grouped-daily response, actions and materialise no-op, and a holiday is

@@ -52,6 +52,8 @@ Base SHAs for dependent Work Orders are by-reference (`main at Closure of
 close (DELIVERY-CHAIN §6.3). WO-0001's Base SHA was rebased by Architect
 determination — see its §11.
 
+| [WO-0024](WO-0024-pending-days-and-the-market-calendar.md) | **URGENT** — a pending day is not a holiday: `pending` status, the market calendar, the retry (AMD-0036) | WO-0004 (merged — this corrects it) | P0-H — precedes WO-0009's remaining criteria | Approved |
+
 ## PID-ARGUS-0002 — Screening Engine and Rotation Layer (Draft)
 
 | WO | Title | Depends on | Group | Status |
