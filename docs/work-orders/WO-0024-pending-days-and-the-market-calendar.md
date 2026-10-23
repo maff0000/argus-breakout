@@ -34,7 +34,14 @@ Three changes:
 argus/data/schema.py            modify  add `market_calendar (date DATE PRIMARY KEY, is_trading BOOLEAN NOT NULL,
                                           early_close BOOLEAN NOT NULL, source TEXT NOT NULL, fetched_at TIMESTAMP)`;
                                           bump SCHEMA_VERSION to 11
-argus/data/providers/polygon.py modify  market_status_upcoming() -> pl.DataFrame[date, is_trading, early_close]
+argus/data/providers/polygon.py modify  AMD-0037 §2B — grouped_daily raises DataNotYetAvailable on HTTP 403 for a date
+                                          within the last 5 CALENDAR days; ingest_polygon_day records that as 'pending'.
+                                          A 403 on an OLDER date stays an error — there it means entitlement, not
+                                          timing. MEASURED 2026-10-22: 403 at 18:30 New York, then 200 with 12,618
+                                          rows later. So 'pending' has TWO triggers — a recent-date 403 and a
+                                          200-with-empty on a calendar trading day — and AMD-0036 §2A named only the
+                                          second while the vendor uses the first
+                                        market_status_upcoming() -> pl.DataFrame[date, is_trading, early_close]
                                           (GET /v1/marketstatus/upcoming — exchange holidays and early closes, same
                                            vendor and key as the bars, so AMD-0036 §2B keeps WO-0004 §4's
                                            no-new-dependency decision while fixing its implementation)
@@ -87,6 +94,8 @@ nothing.
 ## 5. Required tests
 | Test | Proves | Capable of failing because… |
 |---|---|---|
+| `test_ingest_polygon.py::test_403_on_recent_date_is_pending` | a 403 for a date 1 day old → `status='pending'`, retried, **not** `failed` | asserts the status — the measured 2026-10-22 failure, pinned |
+| `test_ingest_polygon.py::test_403_on_old_date_is_still_an_error` | a 403 for a date 30 days old → error, **not** pending | the other branch: entitlement is not timing |
 | `test_ingest_polygon.py::test_empty_response_on_trading_day_is_pending` | calendar says trading, response empty → `status='pending'`, **not** `holiday` | asserts the status — the defect, pinned |
 | `test_ingest_polygon.py::test_empty_response_on_calendar_holiday_is_holiday` | calendar says non-trading → `holiday` and `ok=True` | the other branch; fails if everything becomes pending |
 | `test_ingest_polygon.py::test_unknown_calendar_date_is_pending_not_holiday` | calendar does not cover the date → `pending` | asserts the safe default |
@@ -98,6 +107,7 @@ nothing.
 
 ## 6. Acceptance criteria
 - **AC1** — `calendar refresh` on the host populates `market_calendar` with the exchange's upcoming holidays and early closes; row count and the next three non-trading dates filed.
+- **AC2a** — (AMD-0037 §2B) A **403** on a recent date records **`pending`**, the night reports `ok=False`, the retry re-attempts, and the day completes when the vendor serves 200 (operator check: the `ingest_log` sequence with timestamps — this is the measured 2026-10-22 failure).
 - **AC2** — A trading day with an empty grouped-daily response records **`pending`**, the night reports **`ok=False`**, the retry timer re-attempts, and the day completes when the vendor publishes (operator check: the `ingest_log` sequence for one such date, with timestamps).
 - **AC3** — A genuine calendar holiday still records `holiday` with `ok=True` and no alarm (operator check: a real upcoming holiday or the most recent one).
 - **AC4** — **The vendor's publication time is measured** (AMD-0036 §2D): poll `market-status` and the grouped-daily endpoint at intervals through one session and file **the time the day's data first appears**, with the polling log. The schedule and the retry window are then set from that figure, and the figure is written into `DESIGN.md` §10 by the Architect. **No overnight wait is used to establish it.**

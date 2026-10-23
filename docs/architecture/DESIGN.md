@@ -95,7 +95,7 @@ ADR-0003 (data sources), ADR-0004 (model gateway), ADR-0005
 ### 3.1 Sources and roles (ADR-0003)
 | Source | Role | Cadence | Limits |
 |---|---|---|---|
-| Polygon `GET /v2/aggs/grouped/locale/us/market/stocks/{date}?adjusted=true` | primary nightly OHLCV, all US tickers | 1 call per trading day; ≈500 calls for the 2-year backfill | 5 calls/min; 2 years; EOD delayed |
+| Polygon `GET /v2/aggs/grouped/locale/us/market/stocks/{date}?adjusted=true` | primary nightly OHLCV, all US tickers. **Measured 2026-10-22: HTTP 403 at 18:30 New York, HTTP 200 with 12,618 rows later** — so a recent-date 403 is `pending`, not an error (AMD-0037 §2B); the publication time from WO-0024 AC4 is recorded in §10 | 1 call per trading day; ≈500 calls for the 2-year backfill | 5 calls/min; 2 years; EOD delayed |
 | Bootstrap (yfinance or Stooq) | one-off 10+ year adjusted bars for universe + ETFs | once | unofficial; validated before use |
 | IBKR paper gateway (`ib_async`) | reconciliation sample (20 symbols/night, rotating, flagged-first), corporate-action truth, IV30 for ETFs/index | nightly | vendor limit ≈60 historical requests / 10 min; **the pacer implements a conservative 50** and the nightly budget is 46 (AMD-0020 §2D). Daily `TRADES` volume is **not** comparable with consolidated volume — measured ≈2× at WO-0008 — while closes are; see §3.3 |
 | FMP Basic | `profile` (GICS sector + industry group, fallback only), `earnings-calendar`, `dividends-calendar`, `splits-calendar` | daily calendars | 250 calls/day; the constituent endpoints are **402 on this plan** — AMD-0013 |

@@ -322,6 +322,13 @@ change (AMD-0005).
    delta's bound is the Work Order's §2 Scope as verified by the Auditor's
    `scope_fidelity`, plus evidence and clerical paths. Any "the diff
    touches only …" file list in an earlier amendment is superseded.
+11. **A migration is gated on the presence of what it adds, never on the
+    `SCHEMA_VERSION` literal (AMD-0037 §2D).** The version is a marker for
+    humans and must never be a control: migrations merging out of order
+    would otherwise skip silently, the trap caught at `111c12a`. Every
+    migration is idempotent and checks for its own column or table. Where
+    branches disagree on the literal, **keep `main`'s and let the gates do
+    the work** — no ruling needed.
 10. **A criterion that depends on an external fact cites its measurement
     (AMD-0036 §2E).** Where an acceptance criterion turns on something
     outside this system's control — a vendor's publication time, a tier's
