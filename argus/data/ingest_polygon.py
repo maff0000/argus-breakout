@@ -251,6 +251,9 @@ def ingest_polygon_actions(store: Store, client: PolygonClient, since: date) -> 
     an ex-date persists, a quarterly beside a special (AMD-0027 2A). Real-id rows then supersede
     the migration's `legacy` placeholder for their (symbol, date). Returns the total rows written
     across both tables.
+
+    A re-run is an UPSERT over the primary key, so a row stored before schema 7 gets its
+    `declaration_date` and `frequency` populated (AMD-0029 2A), not skipped.
     """
     known = store.read("SELECT symbol FROM symbols")["symbol"].to_list()
     keys = ["symbol", "date", "source"]
@@ -268,7 +271,9 @@ def ingest_polygon_actions(store: Store, client: PolygonClient, since: date) -> 
         .unique(subset=["symbol", "date", "vendor_id"], keep="last", maintain_order=True)
         .rename({"cash_dividend": "cash_amount"})
         .with_columns(pl.lit(SOURCE).alias("source"))
-        .select("symbol", "date", "cash_amount", "source", "vendor_id")
+        .select(
+            "symbol", "date", "cash_amount", "source", "vendor_id", "declaration_date", "frequency"
+        )
     )
     n_splits = store.upsert("splits", splits, keys)
     n_divs = store.upsert("dividends", divs, [*keys, "vendor_id"])

@@ -105,6 +105,11 @@ def classify_stored_vs_raw(stored: float | None, amounts: list[float]) -> str:
     return "neither"
 
 
+def _field(rec: Any, name: str) -> Any:
+    """A record's raw `name` as the API sent it (None where absent), for the summary lines."""
+    return rec.get(name) if isinstance(rec, dict) else None
+
+
 def _cash_amounts(records: list[Any]) -> list[float]:
     out = []
     for r in records:
@@ -304,7 +309,11 @@ def same_date_dividend_report(
                 {"symbol": symbol, "date": on_date, "source": "polygon_raw",
                  "n_rows_stored": n_stored,
                  "stored_amount": float(amt) if isinstance(amt, int | float) else None,
-                 "note": f"record {i}/{n} verbatim: {json.dumps(rec)}"}
+                 "note": (
+                     f"record {i}/{n} "
+                     f"declaration_date={_field(rec, 'declaration_date')} "
+                     f"frequency={_field(rec, 'frequency')} verbatim: {json.dumps(rec)}"
+                 )}
             )
 
         def collect(field: str) -> list[Any]:
@@ -317,6 +326,7 @@ def same_date_dividend_report(
                  f"n_records_returned={n}; cash_amounts={json.dumps(collect('cash_amount'))}; "
                  f"dividend_type={json.dumps(collect('dividend_type'))}; "
                  f"frequency={json.dumps(collect('frequency'))}; "
+                 f"declaration_date={json.dumps(collect('declaration_date'))}; "
                  f"response_status={payload.status}; response_count={payload.count}; "
                  f"next_url_present={payload.has_next_url}; "
                  f"stored_polygon_amount={stored_amount}; "
@@ -332,6 +342,8 @@ ATTRIBUTION_SCHEMA = {
     "n_records": pl.Int64,
     "amounts": pl.List(pl.Float64),
     "ids": pl.List(pl.String),
+    "declaration_dates": pl.List(pl.String),
+    "frequencies": pl.List(pl.Int64),
     "raw_sum": pl.Float64,
     "stored_polygon": pl.Float64,
     "n_stored_polygon": pl.Int64,
@@ -386,6 +398,8 @@ def attribute_pairs(
         payload = fetch_raw_dividend_records(client, sym, ex)
         amounts = _cash_amounts(payload.records)
         ids = [str(r.get("id")) if isinstance(r, dict) else "" for r in payload.records]
+        decls = [_field(r, "declaration_date") for r in payload.records]
+        freqs = [_field(r, "frequency") for r in payload.records]
         stored = store.read(
             "SELECT source, sum(cash_amount) AS total, count(*) AS n FROM dividends "
             "WHERE symbol = ? AND date = ? GROUP BY source",
@@ -402,6 +416,8 @@ def attribute_pairs(
             {
                 "symbol": sym, "date": ex, "n_records": len(payload.records),
                 "amounts": amounts, "ids": ids, "raw_sum": raw_sum,
+                "declaration_dates": [None if d is None else str(d) for d in decls],
+                "frequencies": [f if isinstance(f, int) else None for f in freqs],
                 "stored_polygon": None if pg is None else pg["total"],
                 "n_stored_polygon": 0 if pg is None else pg["n"],
                 "yfinance_stored": yf_amt, "split_cum": cum, "polygon_normalised": pg_norm,

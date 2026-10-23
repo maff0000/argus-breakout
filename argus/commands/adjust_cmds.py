@@ -34,6 +34,10 @@ def materialise_cmd(
         f"symbols={report.n_symbols} rows={report.n_rows} readjusted={report.n_readjusted} "
         f"warnings={len(report.warnings)}"
     )
+    typer.echo(
+        "ambiguous dividend groups resolved by default (collapsed): "
+        f"{report.n_ambiguous_groups_resolved_by_default}"
+    )
     excluded = report.n_symbol_days_flag_excluded
     typer.echo(
         f"{report.n_days_quarantined_skipped} quarantined days not published, "

@@ -33,6 +33,20 @@ its ex-date (`split_cum`, computed in `apply_splits` beside the price divisor), 
 `split_cum` of the last bar BEFORE the ex-date, so a split dated on the ex-date is divided out
 (the dividend was declared before it; AMD-0021 2D). `dividend_disagreement` compares two sources
 only after both are put on that one basis (AMD-0021 2D).
+
+Duplicate guard (AMD-0031 2A, 2B, replacing AMD-0029 2B). Within one (symbol, ex-date, source),
+records differing in `cash_amount`, `declaration_date` or `frequency` are DISTINCT dividends and
+are summed. Records identical in all three, differing only in `vendor_id`, are AMBIGUOUS: a
+duplicated record and a genuine pair look the same from one source. They are resolved against the
+other source's basis-normalised total for that ex-date, BEFORE summing: within one cent of the
+single amount collapses, within one cent of the sum keeps all, neither (or no second source)
+collapses, warns and is COUNTED (`MaterialiseReport.n_ambiguous_groups_resolved_by_default`).
+Collapse is the default because an overstated dividend inflates historical returns. Where a source
+supplies a NULL declaration date or frequency the signature falls back to the amount and the
+weakening is warned. Stored rows are never deleted: this is an adjustment-time decision.
+The larger-total rule of AMD-0027 2D does not apply when one source's total is an integer
+multiple (2x, 3x, ...) of the other's within one cent: that is the duplicate signature, so the
+pair is warned, named, and left on source precedence.
 """
 
 import json
@@ -69,6 +83,8 @@ _RATIO_TOLERANCE = 0.001  # split ratio disagreement, relative (0.1%, AMD-0012)
 _DIVIDEND_TOLERANCE = 0.01  # dividend disagreement, one cent (AMD-0012)
 # AMD-0027 2D: past one cent AND this fraction of the larger total, the larger total wins.
 _DIVIDEND_REL_TOLERANCE = 0.02
+# Rounding of an amount inside the dedupe key (a float key must not split two equal amounts).
+_DEDUPE_AMOUNT_DECIMALS = 6
 # AMD-0021 2B: a symbol's post-membership tail is excluded only where the ticker was REASSIGNED.
 # A reassigned ticker's hiatus runs to months or years (a delisting, then a different company
 # taking the symbol); a company that merely leaves the index trades straight through its
@@ -105,6 +121,9 @@ class MaterialiseReport:
     n_bars_after_final_end_without_continuity: bars dropped after a member's final end because
       the ticker was reassigned (a trading gap of more than 20 days across it, no rename
       continuity; AMD-0021 2B). Each such symbol warns, naming the gap.
+    n_ambiguous_groups_resolved_by_default: identical-signature dividend records the second source
+      could not settle, so the collapse default stood (AMD-0031 2B). Reported with every run: a
+      tie-breaker is acceptable while it is rare and visible. Each one also warns.
     """
 
     n_symbols: int
@@ -117,6 +136,7 @@ class MaterialiseReport:
     n_members_flagged_by_date: dict[date, int] = field(default_factory=dict)
     n_bars_before_first_membership: int = 0
     n_bars_after_final_end_without_continuity: int = 0
+    n_ambiguous_groups_resolved_by_default: int = 0
 
 
 def _warn(kind: str, symbol: str, d: date | None, detail: str) -> str:
@@ -217,18 +237,221 @@ def totals_materially_differ(a: float, b: float) -> bool:
     )
 
 
-def resolve_dividends(
-    dividends: pl.DataFrame, split_cum_at=None
-) -> tuple[pl.DataFrame, list[str]]:
-    """One row per (symbol, ex-date): the SUM of one source's records for it (AMD-0027 2A, 2B).
+def integer_multiple(a: float, b: float) -> int | None:
+    """k >= 2 where the larger of two normalised totals is k times the smaller within one cent.
 
-    Within a source, every vendor record of an ex-date is summed (a quarterly and a special are
-    two records, one total). Across sources, Polygon takes precedence over yfinance, EXCEPT
+    The test (AMD-0029 2C), on totals already on one basis: both must be positive; with
+    `lo <= hi`, k = round(hi / lo) and the pair is a multiple when k >= 2 and
+    |hi - k * lo| <= one cent (the same cent, and the same 4-decimal rounding, as
+    `totals_differ_by_a_cent`). Equal totals are k = 1 and are NOT a multiple case. Returns k, or
+    None when the pair is not a multiple."""
+    lo, hi = sorted((a, b))
+    if not lo > 0:
+        return None
+    k = round(hi / lo)
+    if k < 2:
+        return None
+    if abs(round(hi, 4) - round(k * lo, 4)) > _DIVIDEND_TOLERANCE + 1e-9:
+        return None
+    return int(k)
+
+
+def group_source_records(rows: list[dict]) -> tuple[list[list[dict]], bool]:
+    """One source's records of ONE ex-date -> (signature groups, weakened).
+
+    Records that differ in `cash_amount`, `declaration_date` OR `frequency` are DISTINCT dividends
+    and fall in different groups (each is summed). Records identical in all three, differing only
+    in `vendor_id`, share a group of two or more: that group is AMBIGUOUS, not a duplicate
+    (AMD-0031 2A: a duplicated record and a genuine pair are indistinguishable from one source).
+    If ANY record of the source lacks a declaration date or a frequency, the signature falls back
+    to the amount alone for that source and `weakened` is True (only reported when there is more
+    than one record, since a single record has nothing to group)."""
+    strong = len(rows) < 2 or all(
+        r.get("declaration_date") is not None and r.get("frequency") is not None for r in rows
+    )
+    groups: dict = {}
+    for r in rows:
+        amount = round(r["cash_amount"], _DEDUPE_AMOUNT_DECIMALS)
+        key = (amount, r.get("declaration_date"), r.get("frequency")) if strong else (amount,)
+        groups.setdefault(key, []).append(r)
+    return list(groups.values()), not strong
+
+
+def decide_ambiguous_group(
+    total_if_one: float, total_if_all: float, other_total: float | None
+) -> tuple[str, str]:
+    """The AMD-0031 2A three-way test -> (resolution, reason).
+
+    `total_if_one` / `total_if_all`: this source's ex-date total with the ambiguous group counted
+    once / counted in full, both on one basis; `other_total`: the other source's total on that
+    same basis, or None when there is no usable second source. Order of tests:
+      1. no second source -> ('default', 'no_second_source');
+      2. within one cent of BOTH (the group's amount is itself about two cents or less, so the
+         second source cannot tell the readings apart) -> ('default', 'second_source_matches_both');
+      3. within one cent of `total_if_one` only -> ('duplicate', 'matches_one');
+      4. within one cent of `total_if_all` only -> ('genuine', 'matches_sum');
+      5. neither -> ('default', 'second_source_matches_neither').
+    'default' collapses (the safer, understating direction; AMD-0031 2B) and is counted. The
+    cent is `totals_differ_by_a_cent`, the same one every other dividend comparison uses."""
+    if other_total is None:
+        return "default", "no_second_source"
+    one = not totals_differ_by_a_cent(total_if_one, other_total)
+    full = not totals_differ_by_a_cent(total_if_all, other_total)
+    if one and full:
+        return "default", "second_source_matches_both"
+    if one:
+        return "duplicate", "matches_one"
+    if full:
+        return "genuine", "matches_sum"
+    return "default", "second_source_matches_neither"
+
+
+def _comparable_fn(split_cum_at, has_basis: bool):
+    def comparable(row: dict) -> float:
+        if split_cum_at is not None and has_basis and row["basis"] == "as_paid":
+            return row["cash_amount"] / split_cum_at(row["symbol"], row["date"])
+        return row["cash_amount"]
+
+    return comparable
+
+
+def _resolve_ex_date(sym, ex, by_source: dict[str, list[dict]], comparable, has_basis: bool):
+    """One (symbol, ex-date): each source's records -> (totals by source, warnings, outcomes).
+
+    Records are grouped by signature (`group_source_records`); every ambiguous group is resolved
+    by `decide_ambiguous_group` against the OTHER source's total before the source is summed
+    (AMD-0031 2A). The other source's total is its distinct records summed; a second source that
+    has ambiguous groups of its own cannot settle anything (circular), so it counts as no second
+    source. Several ambiguous groups of one source are taken in order, each against the running
+    total with the earlier verdicts applied and the later groups still collapsed. `outcomes` has
+    one dict per ambiguous group: source, records, amount, resolution, reason."""
+    warnings: list[str] = []
+    outcomes: list[dict] = []
+    grouped: dict[str, list[list[dict]]] = {}
+    for source, records in by_source.items():
+        groups, weakened = group_source_records(records)
+        grouped[source] = groups
+        if weakened:
+            warnings.append(_warn(
+                "dividend_dedupe_weakened", sym, ex,
+                f"source={source} records={len(records)} declaration_date or frequency "
+                "is NULL: grouped on cash_amount alone",
+            ))
+
+    def reference(source: str) -> tuple[str | None, float | None, str]:
+        """(other source, its total, why-none): the first other source without ambiguity."""
+        why = "no_second_source"
+        for other, groups in grouped.items():
+            if other == source:
+                continue
+            if all(len(g) == 1 for g in groups):
+                return other, sum(comparable(g[0]) for g in groups), ""
+            why = "second_source_itself_ambiguous"
+        return None, None, why
+
+    totals: dict[str, dict] = {}
+    for source, groups in grouped.items():
+        records = by_source[source]
+        ref_src, ref_total, no_ref = reference(source)
+        current = sum(comparable(g[0]) for g in groups)  # every ambiguous group counted once
+        copies = [1] * len(groups)
+        for gi, g in enumerate(groups):
+            if len(g) == 1:
+                continue
+            amount, n = comparable(g[0]), len(g)
+            resolution, reason = decide_ambiguous_group(
+                current, current + (n - 1) * amount, ref_total
+            )
+            if ref_total is None:
+                reason = no_ref
+            evidence = (
+                f"{ref_src}={ref_total:.4f} if_one={current:.4f} "
+                f"if_all={current + (n - 1) * amount:.4f}"
+                if ref_total is not None else ""
+            )
+            if resolution == "genuine":
+                copies[gi] = n
+                current += (n - 1) * amount
+            outcomes.append({"source": source, "records": n, "amount": amount,
+                             "resolution": resolution, "reason": reason})
+            warnings.append(_warn(
+                "dividend_ambiguous_group", sym, ex,
+                f"source={source} records={n} amount={amount:.4f} "
+                f"ids={','.join(str(r.get('vendor_id')) for r in g)} "
+                f"resolution={'default_collapse' if resolution == 'default' else resolution} "
+                f"({reason}) {evidence}".rstrip(),
+            ))
+        t = totals[source] = {
+            "source": source, "stored": 0.0, "cmp": 0.0,
+            "basis": records[0].get("basis") if has_basis else None,
+        }
+        for g, c in zip(groups, copies, strict=True):
+            for row in g[:c]:
+                t["stored"] += row["cash_amount"]
+                t["cmp"] += comparable(row)
+    return totals, warnings, outcomes
+
+
+def _by_source(grp: pl.DataFrame) -> dict[str, list[dict]]:
+    out: dict[str, list[dict]] = {}  # insertion order = precedence order
+    for row in grp.iter_rows(named=True):
+        out.setdefault(row["source"], []).append(row)
+    return out
+
+
+def dividend_dedupe_counts(dividends: pl.DataFrame, split_cum_at=None) -> dict[str, int]:
+    """Store-wide AC2 counts over (symbol, ex-date, source) groups holding SEVERAL records, each
+    classified once: 'duplicate_groups_collapsed' (an ambiguous group resolved DUPLICATE by the
+    second source, none by default), 'resolved_by_default' (at least one ambiguous group fell to
+    the collapse default), 'genuine_multi_record' (every record kept: distinct on the signature,
+    or an ambiguous group resolved GENUINE), and 'weakened' (grouped on the amount alone).
+    Amounts are compared as stored unless `split_cum_at` is given (see `resolve_dividends`)."""
+    out = {"duplicate_groups_collapsed": 0, "genuine_multi_record": 0,
+           "resolved_by_default": 0, "weakened": 0}
+    if dividends.is_empty():
+        return out
+    has_basis = "basis" in dividends.columns
+    comparable = _comparable_fn(split_cum_at, has_basis)
+    for _key, grp in dividends.group_by(["symbol", "date"], maintain_order=True):
+        sym, ex = grp["symbol"][0], grp["date"][0]
+        by_source = _by_source(grp)
+        _totals, _warnings, outcomes = _resolve_ex_date(sym, ex, by_source, comparable, has_basis)
+        for source, records in by_source.items():
+            if len(records) < 2:
+                continue
+            out["weakened"] += int(group_source_records(records)[1])
+            mine = [o["resolution"] for o in outcomes if o["source"] == source]
+            if "default" in mine:
+                out["resolved_by_default"] += 1
+            elif "duplicate" in mine:
+                out["duplicate_groups_collapsed"] += 1
+            else:
+                out["genuine_multi_record"] += 1
+    return out
+
+
+def resolve_dividends(
+    dividends: pl.DataFrame, split_cum_at=None, stats: dict | None = None
+) -> tuple[pl.DataFrame, list[str]]:
+    """One row per (symbol, ex-date): the SUM of one source's dividends for it (AMD-0027 2A, 2B).
+
+    Within a source, records differing in `cash_amount`, `declaration_date` or `frequency` are
+    distinct dividends and are summed (a quarterly and a special are two records, one total).
+    Records identical in all three are AMBIGUOUS and are resolved against the other source's
+    total before summing (AMD-0031 2A; `_resolve_ex_date`, `decide_ambiguous_group`): one cent of
+    the single amount collapses, one cent of the sum keeps all, neither (or no second source)
+    collapses, warns and is counted. Every verdict is a `dividend_ambiguous_group` warning with
+    its evidence. `stats`, if given, has "ambiguous_default" incremented by the number of groups
+    that fell to the default.
+    Across sources, Polygon takes precedence over yfinance, EXCEPT
     where the two sources' normalised totals differ by more than one cent AND `_DIVIDEND_REL`
     relative to the larger: then the LARGER total is taken and `total_source` records which
     source supplied it (AMD-0027 2D: a vendor omitting a component is observed, one inventing
     one is not). A difference of more than one cent but within the relative band is warned and
-    precedence is untouched, as before. Every warning carries both figures.
+    precedence is untouched, as before. Where one total is an integer multiple of the other
+    within one cent (`integer_multiple`), the larger-total rule does NOT apply (AMD-0029 2C): a
+    `dividend_integer_multiple` warning names the pair and precedence stands. Every warning
+    carries both figures.
 
     The comparison is on one basis (AMD-0021 2D): `split_cum_at(symbol, ex_date)` is the
     cumulative ratio of the splits after the ex-date, an 'as_paid' amount is divided by it and a
@@ -245,23 +468,24 @@ def resolve_dividends(
             pl.lit(None, dtype=pl.String).alias("total_source")
         ), warnings
 
-    def comparable(row: dict) -> float:
-        if split_cum_at is not None and has_basis and row["basis"] == "as_paid":
-            return row["cash_amount"] / split_cum_at(row["symbol"], row["date"])
-        return row["cash_amount"]
+    comparable = _comparable_fn(split_cum_at, has_basis)
 
-    ranked = dividends.with_columns(_rank_expr().alias("_rank")).sort(["symbol", "date", "_rank"])
+    # vendor_id last: the order of one source's records (so how they are named in a warning)
+    # must not depend on storage order.
+    order = ["symbol", "date", "_rank"]
+    if "vendor_id" in dividends.columns:
+        order.append("vendor_id")
+    ranked = dividends.with_columns(_rank_expr().alias("_rank")).sort(order)
     kept: list[dict] = []
     for (sym, ex), grp in ranked.group_by(["symbol", "date"], maintain_order=True):
-        totals: dict[str, dict] = {}  # insertion order = precedence order
-        for row in grp.iter_rows(named=True):
-            t = totals.setdefault(
-                row["source"],
-                {"source": row["source"], "stored": 0.0, "cmp": 0.0,
-                 "basis": row.get("basis") if has_basis else None},
+        totals, found, outcomes = _resolve_ex_date(
+            sym, ex, _by_source(grp), comparable, has_basis
+        )
+        warnings.extend(found)
+        if stats is not None:
+            stats["ambiguous_default"] = stats.get("ambiguous_default", 0) + sum(
+                o["resolution"] == "default" for o in outcomes
             )
-            t["stored"] += row["cash_amount"]
-            t["cmp"] += comparable(row)
         srcs = list(totals.values())
         win = chosen = srcs[0]
         for other in srcs[1:]:
@@ -271,6 +495,17 @@ def resolve_dividends(
             detail = f"{win['source']}={a:.4f} {other['source']}={b:.4f}"
             if split_cum_at is not None and has_basis:
                 detail += f" (normalised; stored {win['stored']:.4f}/{other['stored']:.4f})"
+            multiple = integer_multiple(a, b)
+            if multiple is not None:
+                # The duplicate signature, not the omission one (AMD-0029 2C): warn, name the
+                # pair, and leave the choice on source precedence.
+                warnings.append(_warn(
+                    "dividend_integer_multiple", sym, ex,
+                    f"{win['source']}={a:.4f} {other['source']}={b:.4f} multiple={multiple}x "
+                    f"left on source precedence ({win['source']}), attribute from the raw payload"
+                    + (detail[detail.index(" (normalised"):] if " (normalised" in detail else ""),
+                ))
+                continue
             if totals_materially_differ(a, b):
                 if b > chosen["cmp"]:
                     chosen = other
@@ -346,7 +581,8 @@ def _require_dividend_basis(dividends: pl.DataFrame) -> None:
 
 
 def dividend_adjusted_close(
-    bars: pl.DataFrame, dividends: pl.DataFrame, warnings: list[str] | None = None
+    bars: pl.DataFrame, dividends: pl.DataFrame, warnings: list[str] | None = None,
+    stats: dict | None = None,
 ) -> pl.Series:
     """adj_close = close x PROD over ex-dates E > date of (1 - dividend / close[prior bar of E]).
 
@@ -360,7 +596,8 @@ def dividend_adjusted_close(
     prior close is the last bar before the ex-date. If there is none within five calendar days
     or it is not a positive number, the dividend is skipped and a warning appended to
     `warnings`. A dividend with no bar before it adjusts nothing and is ignored; one with an
-    ex-date after the last bar waits until its ex-date bar exists.
+    ex-date after the last bar waits until its ex-date bar exists. `stats`, if given, has
+    "ambiguous_default" incremented by the groups `resolve_dividends` resolved by default.
     """
     n = bars.height
     if n == 0:
@@ -379,7 +616,7 @@ def dividend_adjusted_close(
         return cums[max(bisect_left(dates, ex) - 1, 0)]
 
     resolved, found = resolve_dividends(
-        dividends.filter(pl.col("symbol") == sym), split_cum_at
+        dividends.filter(pl.col("symbol") == sym), split_cum_at, stats
     )
     sink = warnings if warnings is not None else []
     sink.extend(found)
@@ -534,7 +771,7 @@ def _materialise_symbol(
 
     prev = int(existing["adj_version"].max()) if existing.height else 0
     adjusted = apply_splits(sel, splits, max(prev, 1))
-    adj_close = dividend_adjusted_close(adjusted, dividends, warnings)
+    adj_close = dividend_adjusted_close(adjusted, dividends, warnings, stats)
     new = (
         adjusted.with_columns(adj_close.alias("adj_close"))
         .select("symbol", "date", *_OHLCV, "adj_close", "adj_version")
@@ -572,6 +809,7 @@ def materialise(store: Store, symbols: list[str] | None = None) -> MaterialiseRe
     flagged = store.read_bar_flags(targets, sorted(AGGREGATE_EXCLUDING_FLAGS))
     stats: dict = {
         "skipped_days": set(), "flagged": set(), "before_first": 0, "after_final": 0,
+        "ambiguous_default": 0,
     }
     etfs = set(
         store.read("SELECT symbol FROM symbols WHERE gics_sector = ?", [ETF_LABEL])["symbol"]
@@ -624,7 +862,7 @@ def materialise(store: Store, symbols: list[str] | None = None) -> MaterialiseRe
     n_skipped = len(stats["skipped_days"])
     report = MaterialiseReport(
         len(targets), n_rows, n_readjusted, warnings, n_skipped, None, len(stats["flagged"]),
-        by_date, stats["before_first"], stats["after_final"],
+        by_date, stats["before_first"], stats["after_final"], stats["ambiguous_default"],
     )
     detail = json.dumps(
         {
@@ -636,6 +874,7 @@ def materialise(store: Store, symbols: list[str] | None = None) -> MaterialiseRe
                 report.n_bars_after_final_end_without_continuity
             ),
             "n_members_flagged_by_date": {d.isoformat(): n for d, n in by_date.items()},
+            "n_ambiguous_groups_resolved_by_default": report.n_ambiguous_groups_resolved_by_default,
             "n_warnings": len(warnings), "warnings": warnings[:_LOG_WARNINGS],
         }
     )
@@ -646,6 +885,7 @@ def materialise(store: Store, symbols: list[str] | None = None) -> MaterialiseRe
         n_symbol_days_flagged=report.n_symbol_days_flagged,
         n_bars_before_first_membership=report.n_bars_before_first_membership,
         n_bars_after_final_end_without_continuity=report.n_bars_after_final_end_without_continuity,
+        n_ambiguous_groups_resolved_by_default=report.n_ambiguous_groups_resolved_by_default,
     )
     return report
 

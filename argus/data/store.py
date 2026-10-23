@@ -239,15 +239,18 @@ class Store:
             con.close()
 
     def _migrate_dividends(self, con: duckdb.DuckDBPyConnection) -> bool:
-        """Schemas 5 and 6: rebuild an older `dividends` table with `basis` and `vendor_id`.
+        """Schemas 5, 6 and 7: rebuild an older `dividends` table to the current columns.
 
         `basis` is backfilled per source (schema 5). `vendor_id` (schema 6, AMD-0027 2A) is
         'sum' for yfinance, whose figure is already one summed total per ex-date, and 'legacy'
         for a stored Polygon row: its real `id` was never recorded and cannot be derived locally,
         so 'legacy' is a PLACEHOLDER that keeps NOT NULL true; `ingest polygon-actions`
-        replaces it with the real records (see `ingest_polygon_actions`). Idempotent (a table
-        with both columns is left alone); runs inside the caller's transaction; all-or-nothing:
-        an unknown source raises before anything is dropped. Returns True when it rebuilt."""
+        replaces it with the real records (see `ingest_polygon_actions`). `declaration_date` and
+        `frequency` (schema 7, AMD-0029 2A) are backfilled NULL: neither can be derived locally,
+        and `ingest polygon-actions` populates them by upserting over the existing primary key.
+        Idempotent (a table with every column is left alone); runs inside the caller's
+        transaction; all-or-nothing: an unknown source raises before anything is dropped.
+        Returns True when it rebuilt."""
         cols = [
             r[0]
             for r in con.execute(
@@ -255,22 +258,40 @@ class Store:
                 "WHERE table_schema = 'main' AND table_name = 'dividends'"
             ).fetchall()
         ]
-        if not cols or ("basis" in cols and "vendor_id" in cols):
+        if not cols or all(
+            c in cols for c in ("basis", "vendor_id", "declaration_date", "frequency")
+        ):
             return False
-        keep = [c for c in ("symbol", "date", "cash_amount", "basis", "source") if c in cols]
+        keep = [
+            c
+            for c in (
+                "symbol", "date", "cash_amount", "basis", "source", "vendor_id",
+                "declaration_date", "frequency",
+            )
+            if c in cols
+        ]
         old = con.execute("SELECT " + ", ".join(keep) + " FROM dividends").pl()  # noqa: S608
         filled = old if "basis" in cols else stamp_dividend_basis(old)
-        ids = [_backfill_vendor_id(src) for src in filled["source"].to_list()]
-        filled = filled.with_columns(pl.Series("vendor_id", ids, dtype=pl.String)).select(
-            "symbol", "date", "cash_amount", "basis", "source", "vendor_id"
+        if "vendor_id" not in cols:
+            ids = [_backfill_vendor_id(src) for src in filled["source"].to_list()]
+            filled = filled.with_columns(pl.Series("vendor_id", ids, dtype=pl.String))
+        if "declaration_date" not in cols:
+            filled = filled.with_columns(pl.lit(None, dtype=pl.Date).alias("declaration_date"))
+        if "frequency" not in cols:
+            filled = filled.with_columns(pl.lit(None, dtype=pl.Int64).alias("frequency"))
+        filled = filled.select(
+            "symbol", "date", "cash_amount", "basis", "source", "vendor_id",
+            "declaration_date", "frequency",
         )
         con.execute("DROP TABLE dividends")
         con.execute(schema.DDL["dividends"])
         con.register("old_dividends", filled.to_arrow())
         try:
             con.execute(
-                "INSERT INTO dividends (symbol, date, cash_amount, basis, source, vendor_id) "
-                "SELECT symbol, date, cash_amount, basis, source, vendor_id FROM old_dividends"
+                "INSERT INTO dividends (symbol, date, cash_amount, basis, source, vendor_id, "
+                "declaration_date, frequency) "
+                "SELECT symbol, date, cash_amount, basis, source, vendor_id, "
+                "declaration_date, CAST(frequency AS INTEGER) FROM old_dividends"
             )
         finally:
             con.unregister("old_dividends")
@@ -279,7 +300,8 @@ class Store:
     def migrate(self) -> list[tuple[str, int, int]]:
         """Bring a store up to the current schema in place, from stored data only (WO-0013).
 
-        Rebuilds `dividends` with a backfilled `basis` and `vendor_id`, widens any float32 price
+        Rebuilds `dividends` with a backfilled `basis`, `vendor_id`, `declaration_date` and
+        `frequency`, widens any float32 price
         column of the `bars` / `etf_bars` parquet to float64, records the schema version. Never
         reads or writes `bars_raw` beyond a row count. Idempotent.
         Returns (table, rows_before, rows_after)."""

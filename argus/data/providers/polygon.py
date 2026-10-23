@@ -47,6 +47,8 @@ _DIV_SCHEMA = {
     "date": pl.Date,
     "cash_dividend": pl.Float64,
     "vendor_id": pl.String,
+    "declaration_date": pl.Date,
+    "frequency": pl.Int64,
 }
 
 log = structlog.get_logger()
@@ -247,7 +249,16 @@ class PolygonClient:
                 raise ProviderError(
                     f"polygon dividend record without an id: {sym} {d.isoformat()}"
                 )
+            # `declaration_date` and `frequency` are on every record (WO-0015 evidence) and are what
+            # separates a genuine second dividend from a repeated one (AMD-0029 2A). Carried
+            # verbatim; an absent or malformed value is None, never guessed.
+            freq = r.get("frequency")
             out.append(
-                {"symbol": sym, "date": d, "cash_dividend": amount, "vendor_id": vendor_id}
+                {
+                    "symbol": sym, "date": d, "cash_dividend": amount, "vendor_id": vendor_id,
+                    "declaration_date": _parse_date(r.get("declaration_date")),
+                    "frequency": freq if isinstance(freq, int) and not isinstance(freq, bool)
+                    else None,
+                }
             )
         return pl.DataFrame(out, schema=_DIV_SCHEMA)

@@ -41,6 +41,9 @@ _ACTION_SCHEMA = {
 # yfinance delivers one summed dividend per ex-date and no record identifier, so its
 # `dividends.vendor_id` is this literal (AMD-0027 2A).
 DIVIDEND_VENDOR_ID = "sum"
+# It supplies neither `declaration_date` nor `frequency` either: the ingest writes no value for
+# them, so they are NULL for every yfinance row (AMD-0029 2A) and the dedupe falls back to the
+# amount for that source.
 
 log = structlog.get_logger(__name__)
 

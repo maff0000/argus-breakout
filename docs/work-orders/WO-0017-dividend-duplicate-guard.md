@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Approved |
+| **Status** | Closed |
 | **Parent PID** | `docs/pids/PID-ARGUS-0001-foundations.md` §8.5, §8.6 ; `DESIGN.md` §3.2, §3.3 |
 | **Applicable Amendments** | AMD-0019, AMD-0021, AMD-0027, AMD-0029, **AMD-0031 (delta, pre-merge)** |
 | **Base SHA** | main at Closure of WO-0016 |
