@@ -274,7 +274,14 @@ store_meta     (key TEXT PRIMARY KEY, value TEXT)
   return derived from one. When a new split
   arrives, the symbol's history is re-adjusted and `adj_version`
   increments; nothing is overwritten silently. §5 features use
-  split-adjusted OHLCV; return-type features (`ret*`, `mom12_1`, `rs_*`)
+  split-adjusted OHLCV; **return-derived features use `adj_close`, and the
+  split is enumerated feature-by-feature in §5** (AMD-0038 §2B — naming
+  only `ret*`, `mom12_1` and `rs_*` left the basis undetermined for seven
+  features, and the default matters: a dividend payer's `adj_close` sits
+  systematically **below** its `close`, so a moving average taken on
+  `adj_close` is an average of prices that never traded *and* sits lower,
+  biasing every "above its average" test toward high-yield names). Formerly
+  stated as: return-type features (`ret*`, `mom12_1`, `rs_*`)
   use `adj_close`.
 - GICS classification: sector and sub-industry from the public S&P 500
   constituent table, mapped to the 25 GICS industry groups by the static
@@ -519,6 +526,31 @@ universe and within sector (`<feature>_pct`, `<feature>_pct_sector`).
 | | `swing_hi`, `swing_lo` | fractal pivot: a bar whose high (low) is the extreme of the 5 bars either side |
 | | `dist_res_atr`, `dist_sup_atr` | distance to the nearest clustered swing level above/below, in ATR; levels within 0.5·ATR are one level |
 | | `res_touches`, `sup_touches` | touch count of that level — a level tested four times is not the same object as one tested once |
+
+**Price basis, per feature (AMD-0038 §2B).** The principle: a feature
+measuring a **return**, or derived from returns, uses **`adj_close`**; a
+feature measuring a **price level, a range, or a position within price
+history** uses the **split-adjusted OHLCV** (`close`, `high`, `low`).
+
+- **`adj_close`:** `ret5 ret21 ret63 ret126 ret252`, `mom12_1`, `rs_spx`,
+  `rs_sector`, `rs_ig`, `rs_spx_nh63`, `rs_rank`, `rs_rank_sector`,
+  `rs_rank_ig`, `beta60`, `hv20`, `hv60`, `hv_rank252`, `clenow90`,
+  `sharpe63`, `dd126`, `ulcer63`.
+- **Split-adjusted OHLCV:** `sma20 sma50 sma150 sma200`, `slope20_5`,
+  `slope50_10`, `ma_stack`, `trend_template`, `adx14`, `macd_hist`,
+  `atr14`, `atr_pct`, `dist20_atr`, `bb_width`, `bb_width_pct252`,
+  `squeeze`, `rsi14`, `rsi2`, `z20`, `consec_down`, `consec_up`,
+  `pct_from_hi252`, `pct_from_lo252`, `donchian20_hi`, `donchian55_hi`,
+  `base_len`, `base_depth`, `gap_pct`, `nr7`, every candle feature, every
+  level feature, `rvol`, `updown_vol20`, `dist_days25`, `obv_slope20`,
+  `cmf20`, `adv20_usd`.
+
+`clenow90` is on `adj_close` because an annualised log-price regression
+slope is a return measure. `slope20_5`/`slope50_10` are on OHLCV because
+they are ratios of moving averages of `close` and must match the averages
+they come from. **Every feature's basis is pinned by a test on a fixture
+where `close` and `adj_close` differ** — the second audit found the basis
+unpinnable precisely because the fixtures made them equal.
 
 Features are **computed in float64 and stored `float32`** (AMD-0035 §2B).
 This does **not** touch `bars`, whose price columns stay **DOUBLE**

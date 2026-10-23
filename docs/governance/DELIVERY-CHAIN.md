@@ -322,6 +322,15 @@ change (AMD-0005).
    delta's bound is the Work Order's §2 Scope as verified by the Auditor's
    `scope_fidelity`, plus evidence and clerical paths. Any "the diff
    touches only …" file list in an earlier amendment is superseded.
+12. **A criterion must name the population it is measured over
+    (AMD-0038 §2A).** "No surviving mutants", "no defects", "all cases
+    covered" are not criteria unless the set is **defined, enumerable and
+    committed** — otherwise whoever evaluates it chooses the denominator
+    and it cannot be satisfied. Where the target is a property of the
+    implementation, bound it by the **specification**, which is finite, and
+    verify with a **version-controlled** set so successive audits are
+    comparable. **A Delivery Controller may refuse an unbounded criterion
+    and say so; that is not obstruction.**
 11. **A migration is gated on the presence of what it adds, never on the
     `SCHEMA_VERSION` literal (AMD-0037 §2D).** The version is a marker for
     humans and must never be a control: migrations merging out of order
