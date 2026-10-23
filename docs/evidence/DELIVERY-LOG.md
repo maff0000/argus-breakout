@@ -103,3 +103,5 @@ Format: `YYYY-MM-DDTHH:MMZ  WO-NNNN  <state>  <sha|PR|note>`
 2026-10-21T16:59Z  WO-0015  Closed  merged via PR #14
 2026-10-22T05:35Z  WO-0016  Accepted  explicit Architect acceptance, https://github.com/maff0000/argus-breakout/pull/15#issuecomment-6333021458
 2026-10-22T05:35Z  WO-0016  Closed  merged via PR #15
+2026-10-23T08:24Z  WO-0017  Accepted  explicit Architect acceptance, https://github.com/maff0000/argus-breakout/pull/16#issuecomment-6344331099
+2026-10-23T08:24Z  WO-0017  Closed  merged via PR #16
